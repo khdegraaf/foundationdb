@@ -23,19 +23,20 @@
 // When actually compiled (NO_INTELLISENSE), include the generated version of this file.  In intellisense use the source version.
 #if defined(NO_INTELLISENSE) && !defined(FLOW_TDMETRIC_ACTOR_G_H)
         #define FLOW_TDMETRIC_ACTOR_G_H
-        #include "TDMetric.actor.g.h"
+        #include "flow/TDMetric.actor.g.h"
 #elif !defined(FLOW_TDMETRIC_ACTOR_H)
         #define FLOW_TDMETRIC_ACTOR_H
 
-#include "actorcompiler.h"
-#include "flow.h"
-#include "IndexedSet.h"
-#include "network.h"
-#include "Knobs.h"
-#include "genericactors.actor.h"
-#include "CompressedInt.h"
+#include "flow/flow.h"
+#include "flow/IndexedSet.h"
+#include "flow/network.h"
+#include "flow/Knobs.h"
+#include "flow/genericactors.actor.h"
+#include "flow/CompressedInt.h"
 #include <algorithm>
 #include <functional>
+#include <cmath>
+#include "flow/actorcompiler.h"  // This must be the last #include.
 
 struct MetricNameRef {
 	MetricNameRef() {}
@@ -316,7 +317,14 @@ auto tuple_map(F f, const Tuple &t, const Tuples &... ts) -> decltype( tuple_map
 }
 
 template <class T>
-struct Descriptor {};
+struct Descriptor {
+#ifndef NO_INTELLISENSE
+	using fields = std::tuple<>;
+	typedef make_index_sequence_impl<0, index_sequence<>, std::tuple_size<fields>::value>::type field_indexes;
+
+	static StringRef typeName() {{ return LiteralStringRef(""); }}
+#endif
+};
 
 // FieldHeader is a serializable (FIXED SIZE!) and updatable Header type for Metric field levels.
 // Update is via += with either a T or another FieldHeader
@@ -338,9 +346,9 @@ struct FieldHeader {
 		sum += v;
 	}
 	template<class Ar> void serialize(Ar &ar) {
-		ar & version;
+		serializer(ar, version);
 		ASSERT(version == 1);
-		ar & count & sum;
+		serializer(ar, count, sum);
 	}
 };
 
@@ -818,23 +826,29 @@ struct EventMetric : E, ReferenceCounted<EventMetric<E>>, MetricUtil<EventMetric
 
 	template <size_t... Is>
 	void logFields(index_sequence<Is...>, uint64_t t, int64_t l, bool& overflow, int64_t& bytes) {
+#ifdef NO_INTELLISENSE
 		auto _ = {
 			(std::get<Is>(values).log( std::tuple_element<Is, typename Descriptor<E>::fields>::type::get( static_cast<E&>(*this) ), t, l, overflow, bytes ), Void())...
 		};
+#endif
 	}
 
 	template <size_t... Is>
 	void initFields(index_sequence<Is...>) {
+#ifdef NO_INTELLISENSE
 		auto _ = {
 			(std::get<Is>(values).init(), Void())...
 		};
+#endif
 	}
 
 	template <size_t... Is>
 	void nextKeys(index_sequence<Is...>, uint64_t t, int64_t l ) {
+#ifdef NO_INTELLISENSE
 		auto _ = {
 			(std::get<Is>(values).nextKey(t, l),Void())...
 		};
+#endif
 	}
 
 	virtual void flushData(MetricKeyRef const &mk, uint64_t rollTime, MetricUpdateBatch &batch) {
@@ -848,9 +862,11 @@ struct EventMetric : E, ReferenceCounted<EventMetric<E>>, MetricUtil<EventMetric
 
 	template <size_t... Is>
 	void flushFields(index_sequence<Is...>, MetricKeyRef const &mk, uint64_t rollTime, MetricUpdateBatch &batch ) {
+#ifdef NO_INTELLISENSE
 		auto _ = {
 			(std::get<Is>(values).flushField( mk, rollTime, batch ),Void())...
 		};
+#endif
 	}
 
 	virtual void rollMetric( uint64_t t ) {
@@ -860,9 +876,11 @@ struct EventMetric : E, ReferenceCounted<EventMetric<E>>, MetricUtil<EventMetric
 
 	template <size_t... Is>
 	void rollFields(index_sequence<Is...>, uint64_t t ) {
+#ifdef NO_INTELLISENSE
 		auto _ = {
 			(std::get<Is>(values).rollMetric( t ),Void())...
 		};
+#endif
 	}
 
 	virtual void registerFields( MetricKeyRef const &mk, std::vector<Standalone<StringRef>>& fieldKeys ) {
@@ -872,9 +890,11 @@ struct EventMetric : E, ReferenceCounted<EventMetric<E>>, MetricUtil<EventMetric
 
 	template <size_t... Is>
 	void registerFields(index_sequence<Is...>, const MetricKeyRef &mk, std::vector<Standalone<StringRef>>& fieldKeys ) {
+#ifdef NO_INTELLISENSE
 		auto _ = {
 			(std::get<Is>(values).registerField( mk, fieldKeys ),Void())...
 		};
+#endif
 	}
 protected:
     bool it;
@@ -1126,9 +1146,9 @@ struct FieldHeader<TimeAndValue<T>> {
 		previous_time = v.time;
 	}
 	template<class Ar> void serialize(Ar &ar) {
-		ar & version;
+		serializer(ar, version);
 		ASSERT(version == 1);
-		ar & count & area;
+		serializer(ar, count, area);
 	}
 };
 
@@ -1369,5 +1389,7 @@ typedef MetricHandle<StringMetric> StringMetricHandle;
 
 template <typename E>
 using EventMetricHandle = MetricHandle<EventMetric<E>>;
+
+#include "flow/unactorcompiler.h"
 
 #endif

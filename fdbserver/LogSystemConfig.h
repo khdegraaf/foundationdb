@@ -22,9 +22,9 @@
 #define FDBSERVER_LOGSYSTEMCONFIG_H
 #pragma once
 
-#include "TLogInterface.h"
+#include "fdbserver/TLogInterface.h"
 #include "fdbrpc/ReplicationPolicy.h"
-#include "DatabaseConfiguration.h"
+#include "fdbclient/DatabaseConfiguration.h"
 
 template <class Interface>
 struct OptionalInterface {
@@ -45,8 +45,8 @@ struct OptionalInterface {
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & iface;
-		if( !iface.present() ) ar & ident;
+		serializer(ar, iface);
+		if( !iface.present() ) serializer(ar, ident);
 		else ident = iface.get().id();
 	}
 
@@ -55,26 +55,27 @@ protected:
 	Optional<Interface> iface;
 };
 
-enum { HasBestPolicyNone = 0, HasBestPolicyId = 1 };
-
 struct TLogSet {
 	std::vector<OptionalInterface<TLogInterface>> tLogs;
 	std::vector<OptionalInterface<TLogInterface>> logRouters;
 	int32_t tLogWriteAntiQuorum, tLogReplicationFactor;
 	std::vector< LocalityData > tLogLocalities; // Stores the localities of the log servers
+	TLogVersion tLogVersion;
 	IRepPolicyRef tLogPolicy;
-	int8_t locality;
 	bool isLocal;
-	int32_t hasBestPolicy;
+	int8_t locality;
+	Version startVersion;
+	std::vector<std::vector<int>> satelliteTagLocations;
 
-	TLogSet() : tLogWriteAntiQuorum(0), tLogReplicationFactor(0), isLocal(true), hasBestPolicy(HasBestPolicyId), locality(-99) {}
+	TLogSet() : tLogWriteAntiQuorum(0), tLogReplicationFactor(0), isLocal(true), locality(tagLocalityInvalid), startVersion(invalidVersion) {}
 
 	std::string toString() const {
-		return format("anti: %d replication: %d local: %d best: %d routers: %d tLogs: %s locality: %d", tLogWriteAntiQuorum, tLogReplicationFactor, isLocal, hasBestPolicy, logRouters.size(), describe(tLogs).c_str(), locality);
+		return format("anti: %d replication: %d local: %d routers: %d tLogs: %s locality: %d", tLogWriteAntiQuorum, tLogReplicationFactor, isLocal, logRouters.size(), describe(tLogs).c_str(), locality);
 	}
 
 	bool operator == ( const TLogSet& rhs ) const {
-		if (tLogWriteAntiQuorum != rhs.tLogWriteAntiQuorum || tLogReplicationFactor != rhs.tLogReplicationFactor || isLocal != rhs.isLocal || hasBestPolicy != rhs.hasBestPolicy || tLogs.size() != rhs.tLogs.size() || locality != rhs.locality) {
+		if (tLogWriteAntiQuorum != rhs.tLogWriteAntiQuorum || tLogReplicationFactor != rhs.tLogReplicationFactor || isLocal != rhs.isLocal || satelliteTagLocations != rhs.satelliteTagLocations ||
+			startVersion != rhs.startVersion || tLogs.size() != rhs.tLogs.size() || locality != rhs.locality || logRouters.size() != rhs.logRouters.size()) {
 			return false;
 		}
 		if ((tLogPolicy && !rhs.tLogPolicy) || (!tLogPolicy && rhs.tLogPolicy) || (tLogPolicy && (tLogPolicy->info() != rhs.tLogPolicy->info()))) {
@@ -85,11 +86,17 @@ struct TLogSet {
 				return false;
 			}
 		}
+		for(int j = 0; j < logRouters.size(); j++ ) {
+			if (logRouters[j].id() != rhs.logRouters[j].id() || logRouters[j].present() != rhs.logRouters[j].present() || ( logRouters[j].present() && logRouters[j].interf().commit.getEndpoint().token != rhs.logRouters[j].interf().commit.getEndpoint().token ) ) {
+				return false;
+			}
+		}
 		return true;
 	}
 
 	bool isEqualIds(TLogSet const& r) const {
-		if (tLogWriteAntiQuorum != r.tLogWriteAntiQuorum || tLogReplicationFactor != r.tLogReplicationFactor || isLocal != r.isLocal || hasBestPolicy != r.hasBestPolicy || tLogs.size() != r.tLogs.size() || locality != r.locality) {
+		if (tLogWriteAntiQuorum != r.tLogWriteAntiQuorum || tLogReplicationFactor != r.tLogReplicationFactor || isLocal != r.isLocal || satelliteTagLocations != r.satelliteTagLocations ||
+			startVersion != r.startVersion || tLogs.size() != r.tLogs.size() || locality != r.locality) {
 			return false;
 		}
 		if ((tLogPolicy && !r.tLogPolicy) || (!tLogPolicy && r.tLogPolicy) || (tLogPolicy && (tLogPolicy->info() != r.tLogPolicy->info()))) {
@@ -105,22 +112,29 @@ struct TLogSet {
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & tLogs & logRouters & tLogWriteAntiQuorum & tLogReplicationFactor & tLogPolicy & tLogLocalities & isLocal & hasBestPolicy & locality;
+		serializer(ar, tLogs, logRouters, tLogWriteAntiQuorum, tLogReplicationFactor, tLogPolicy, tLogLocalities, isLocal, locality, startVersion, satelliteTagLocations);
+		if (ar.isDeserializing && ar.protocolVersion() < 0x0FDB00B061030001LL) {
+			tLogVersion = TLogVersion::V2;
+		} else {
+			serializer(ar, tLogVersion);
+		}
+		ASSERT(tLogPolicy.getPtr() == nullptr || tLogVersion != TLogVersion::UNSET);
 	}
 };
 
 struct OldTLogConf {
 	std::vector<TLogSet> tLogs;
 	Version epochEnd;
+	int32_t logRouterTags;
 
-	OldTLogConf() : epochEnd(0) {}
+	OldTLogConf() : epochEnd(0), logRouterTags(0) {}
 
 	std::string toString() const {
-		return format("end: %d %s", epochEnd, describe(tLogs).c_str()); 
+		return format("end: %d tags: %d %s", epochEnd, logRouterTags, describe(tLogs).c_str()); 
 	}
 
 	bool operator == ( const OldTLogConf& rhs ) const {
-		return tLogs == rhs.tLogs && epochEnd == rhs.epochEnd;
+		return tLogs == rhs.tLogs && epochEnd == rhs.epochEnd && logRouterTags == rhs.logRouterTags;
 	}
 
 	bool isEqualIds(OldTLogConf const& r) const {
@@ -137,21 +151,38 @@ struct OldTLogConf {
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & tLogs & epochEnd;
+		serializer(ar, tLogs, epochEnd, logRouterTags);
 	}
 };
 
 struct LogSystemConfig {
-	int logSystemType;
+	int32_t logSystemType;
 	std::vector<TLogSet> tLogs;
+	int32_t logRouterTags;
 	std::vector<OldTLogConf> oldTLogs;
-	int expectedLogSets;
-	int minRouters;
+	int32_t expectedLogSets;
+	UID recruitmentID;
+	bool stopped;
+	Optional<Version> recoveredAt;
 
-	LogSystemConfig() : logSystemType(0), minRouters(0), expectedLogSets(0) {}
+	LogSystemConfig() : logSystemType(0), logRouterTags(0), expectedLogSets(0), stopped(false) {}
 
-	std::string toString() const { 
-		return format("type: %d oldGenerations: %d %s", logSystemType, oldTLogs.size(), describe(tLogs).c_str());
+	std::string toString() const {
+		return format("type: %d oldGenerations: %d tags: %d %s", logSystemType, oldTLogs.size(), logRouterTags, describe(tLogs).c_str());
+	}
+
+	std::vector<TLogInterface> allLocalLogs() const {
+		std::vector<TLogInterface> results;
+		for( int i = 0; i < tLogs.size(); i++ ) {
+			if(tLogs[i].isLocal) {
+				for( int j = 0; j < tLogs[i].tLogs.size(); j++ ) {
+					if( tLogs[i].tLogs[j].present() ) {
+						results.push_back(tLogs[i].tLogs[j].interf());
+					}
+				}
+			}
+		}
+		return results;
 	}
 
 	std::vector<TLogInterface> allPresentLogs() const {
@@ -164,6 +195,68 @@ struct LogSystemConfig {
 			}
 		}
 		return results;
+	}
+
+	std::pair<int8_t,int8_t> getLocalityForDcId(Optional<Key> dcId) const {
+		std::map<int8_t, int> matchingLocalities;
+		std::map<int8_t, int> allLocalities;
+		for( auto& tLogSet : tLogs ) {
+			for( auto& tLog : tLogSet.tLogs ) {
+				if( tLogSet.locality >= 0 ) {
+					if( tLog.present() && tLog.interf().locality.dcId() == dcId ) {
+						matchingLocalities[tLogSet.locality]++;
+					} else {
+						allLocalities[tLogSet.locality]++;
+					}
+				}
+			}
+		}
+
+		for(auto& oldLog : oldTLogs) {
+			for( auto& tLogSet : oldLog.tLogs ) {
+				for( auto& tLog : tLogSet.tLogs ) {
+					if( tLogSet.locality >= 0 ) {
+						if( tLog.present() && tLog.interf().locality.dcId() == dcId ) {
+							matchingLocalities[tLogSet.locality]++;
+						} else {
+							allLocalities[tLogSet.locality]++;
+						}
+					}
+				}
+			}
+		}
+
+		int8_t bestLoc = tagLocalityInvalid;
+		int bestLocalityCount = -1;
+		for(auto& it : matchingLocalities) {
+			if(it.second > bestLocalityCount) {
+				bestLoc = it.first;
+				bestLocalityCount = it.second;
+			}
+		}
+
+		int8_t secondLoc = tagLocalityInvalid;
+		int8_t thirdLoc = tagLocalityInvalid;
+		int secondLocalityCount = -1;
+		int thirdLocalityCount = -1;
+		for(auto& it : allLocalities) {
+			if(bestLoc != it.first) {
+				if(it.second > secondLocalityCount) {
+					thirdLoc = secondLoc;
+					thirdLocalityCount = secondLocalityCount;
+					secondLoc = it.first;
+					secondLocalityCount = it.second;
+				} else if(it.second > thirdLocalityCount) {
+					thirdLoc = it.first;
+					thirdLocalityCount = it.second;
+				}
+			}
+		}
+
+		if(bestLoc != tagLocalityInvalid) {
+			return std::make_pair(bestLoc, secondLoc);
+		}
+		return std::make_pair(secondLoc, thirdLoc);
 	}
 
 	std::vector<std::pair<UID, NetworkAddress>> allSharedLogs() const {
@@ -193,7 +286,7 @@ struct LogSystemConfig {
 	bool operator == ( const LogSystemConfig& rhs ) const { return isEqual(rhs); }
 
 	bool isEqual(LogSystemConfig const& r) const {
-		return logSystemType == r.logSystemType && tLogs == r.tLogs && oldTLogs == r.oldTLogs && minRouters == r.minRouters && expectedLogSets == r.expectedLogSets;
+		return logSystemType == r.logSystemType && tLogs == r.tLogs && oldTLogs == r.oldTLogs && expectedLogSets == r.expectedLogSets && logRouterTags == r.logRouterTags && recruitmentID == r.recruitmentID && stopped == r.stopped && recoveredAt == r.recoveredAt;
 	}
 
 	bool isEqualIds(LogSystemConfig const& r) const {
@@ -224,7 +317,7 @@ struct LogSystemConfig {
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & logSystemType & tLogs & oldTLogs & minRouters & expectedLogSets;
+		serializer(ar, logSystemType, tLogs, logRouterTags, oldTLogs, expectedLogSets, recruitmentID, stopped, recoveredAt);
 	}
 };
 

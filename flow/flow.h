@@ -37,13 +37,13 @@
 #include <utility>
 #include <algorithm>
 
-#include "Platform.h"
-#include "FastAlloc.h"
-#include "IRandom.h"
-#include "serialize.h"
-#include "Deque.h"
-#include "ThreadPrimitives.h"
-#include "network.h"
+#include "flow/Platform.h"
+#include "flow/FastAlloc.h"
+#include "flow/IRandom.h"
+#include "flow/serialize.h"
+#include "flow/Deque.h"
+#include "flow/ThreadPrimitives.h"
+#include "flow/network.h"
 
 using namespace std::rel_ops;
 
@@ -68,6 +68,10 @@ bool validationIsEnabled();
 
 extern Optional<uint64_t> parse_with_suffix(std::string toparse, std::string default_unit = "");
 extern std::string format(const char* form, ...);
+
+// On success, returns the number of characters written. On failure, returns a negative number.
+extern int vsformat(std::string &outputString, const char* form, va_list args);
+
 extern Standalone<StringRef> strinc(StringRef const& str);
 extern StringRef strinc(StringRef const& str, Arena& arena);
 extern Standalone<StringRef> addVersionStampAtEnd(StringRef const& str);
@@ -119,7 +123,7 @@ public:
 
 	/* This conversion constructor was nice, but combined with the prior constructor it means that Optional<int> can be converted to Optional<Optional<int>> in the wrong way
 	(a non-present Optional<int> converts to a non-present Optional<Optional<int>>).
-	Use .cast_to<>() instead.
+	Use .castTo<>() instead.
 	template <class S> Optional(const Optional<S>& o) : valid(o.present()) { if (valid) new (&value) T(o.get()); } */
 
 	Optional(Arena& a, const Optional<T>& o) : valid(o.valid) {
@@ -127,11 +131,17 @@ public:
 	}
 	int expectedSize() const { return valid ? get().expectedSize() : 0; }
 
-	template <class R> Optional<R> cast_to() const {
-		if (present())
-			return Optional<R>(get());
-		else
+	template <class R> Optional<R> castTo() const {
+		return map<R>([](const T& v){ return (R)v; });
+	}
+
+	template <class R> Optional<R> map(std::function<R(T)> f) const {
+		if (present()) {
+			return Optional<R>(f(get()));
+		}
+		else {
 			return Optional<R>();
+		}
 	}
 
 	~Optional() {
@@ -166,10 +176,10 @@ public:
 		// SOMEDAY: specialize for space efficiency?
 		if (valid && Ar::isDeserializing)
 			(*(T *)&value).~T();
-		ar & valid;
+		serializer(ar, valid);
 		if (valid) {
 			if (Ar::isDeserializing) new (&value) T();
-			ar & *(T*)&value;
+			serializer(ar, *(T*)&value);
 		}
 	}
 
@@ -207,11 +217,17 @@ public:
 	}
 	int expectedSize() const { return present() ? get().expectedSize() : 0; }
 
-	template <class R> ErrorOr<R> cast_to() const {
-		if (present())
-			return ErrorOr<R>(get());
-		else
-			return ErrorOr<R>();
+	template <class R> ErrorOr<R> castTo() const {
+		return map<R>([](const T& v){ return (R)v; });
+	}
+
+	template <class R> ErrorOr<R> map(std::function<R(T)> f) const {
+		if (present()) {
+			return ErrorOr<R>(f(get()));
+		}
+		else {
+			return ErrorOr<R>(error);
+		}
 	}
 
 	~ErrorOr() {
@@ -243,24 +259,11 @@ public:
 	template <class Ar>
 	void serialize(Ar& ar) {
 		// SOMEDAY: specialize for space efficiency?
-		ar & error;
+		serializer(ar, error);
 		if (present()) {
 			if (Ar::isDeserializing) new (&value) T();
-			ar & *(T*)&value;
+			serializer(ar, *(T*)&value);
 		}
-	}
-
-	bool operator == (ErrorOr const& o) const {
-		return error == o.error && (!present() || get() == o.get());
-	}
-	bool operator != (ErrorOr const& o) const {
-		return !(*this == o);
-	}
-
-	bool operator < (ErrorOr const& o) const {
-		if (error != o.error) return error < o.error;
-		if (!present()) return false;
-		return get() < o.get();
 	}
 
 	bool isError() const { return error.code() != invalid_error_code; }
@@ -633,6 +636,11 @@ public:
 		sav->sendError(error);
 	}
 
+#ifndef NO_INTELLISENSE
+	template<class U>
+	Future(const U&, typename std::enable_if<std::is_assignable<T, U>::value, int*>::type = 0) {}
+#endif
+
 	~Future() {
 		//if (sav && sav->endpoint.isValid()) cout << "Future destroyed for " << sav->endpoint.key << endl;
 		if (sav) sav->delFutureRef();
@@ -949,5 +957,5 @@ inline Future<Void> delayUntil(double time, int taskID = TaskDefaultDelay) { ret
 inline Future<Void> delayJittered(double seconds, int taskID = TaskDefaultDelay) { return g_network->delay(seconds*(FLOW_KNOBS->DELAY_JITTER_OFFSET + FLOW_KNOBS->DELAY_JITTER_RANGE*g_random->random01()), taskID); }
 inline Future<Void> yield(int taskID = TaskDefaultYield) { return g_network->yield(taskID); }
 inline bool check_yield(int taskID = TaskDefaultYield) { return g_network->check_yield(taskID); }
-#include "genericactors.actor.h"
+#include "flow/genericactors.actor.h"
 #endif

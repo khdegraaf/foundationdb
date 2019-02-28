@@ -12,7 +12,6 @@
 .. |reset-func-name| replace:: :meth:`reset <Transaction.reset>`
 .. |reset-func| replace:: :meth:`Transaction.reset`
 .. |cancel-func| replace:: :meth:`Transaction.cancel`
-.. |init-func| replace:: :func:`FDB.init`
 .. |open-func| replace:: :func:`FDB.open`
 .. |on-error-func| replace:: :meth:`Transaction.on_error`
 .. |null-type| replace:: ``nil``
@@ -75,27 +74,15 @@ For API changes between version 14 and |api-version| (for the purpose of porting
 Opening a database
 ==================
 
-After requiring the ``FDB`` gem and selecting an API version, you probably want to open a :class:`Database`. The simplest way of doing this is using :func:`open`::
+After requiring the ``FDB`` gem and selecting an API version, you probably want to open a :class:`Database` using :func:`open`::
 
     require 'fdb'
-    FDB.api_version 510
+    FDB.api_version 610
     db = FDB.open
 
-.. function:: open( cluster_file=nil, db_name="DB" ) -> Database
+.. function:: open( cluster_file=nil ) -> Database
 
     |fdb-open-blurb|
-
-    .. note:: In this release, db_name must be "DB".
-
-    .. note:: ``fdb.open`` combines the effect of :func:`init`, :func:`create_cluster`, and :meth:`Cluster.open_database`.
-
-.. function:: init() -> nil
-
-    Initializes the FoundationDB API, creating a thread for the FoundationDB client and initializing the client's networking engine. :func:`init` can only be called once. If called subsequently or after :func:`open`, it will raise a ``client_invalid_operation`` error.
-
-.. function:: create_cluster(cluster_file=nil) -> Cluster
-
-    Connects to the cluster specified by :ref:`cluster_file <foundationdb-cluster-file>`, or by a :ref:`default cluster file <default-cluster-file>` if ``cluster_file`` is ``nil``.
 
 .. global:: FDB.options
 
@@ -105,17 +92,23 @@ After requiring the ``FDB`` gem and selecting an API version, you probably want 
 
     .. method:: FDB.options.set_trace_enable(output_directory) -> nil
 
-        |option-trace-enable-blurb|
+       |option-trace-enable-blurb|
 
-        .. warning:: |option-trace-enable-warning|
+       .. warning:: |option-trace-enable-warning|
 
     .. method:: FDB.options.set_trace_max_logs_size(bytes) -> nil
 
-        |option-trace-max-logs-size-blurb|
+       |option-trace-max-logs-size-blurb|
 
     .. method:: FDB.options.set_trace_roll_size(bytes) -> nil
 
-        |option-trace-roll-size-blurb|
+       |option-trace-roll-size-blurb|
+
+    .. method:: FDB.options.set_trace_format(format) -> nil
+
+       |option-trace-format-blurb|
+
+    .. method:: FDB.options.set_disable_multi_version_client_api() -> nil
 
        |option-disable-multi-version-client-api|
 
@@ -160,23 +153,12 @@ After requiring the ``FDB`` gem and selecting an API version, you probably want 
     .. method :: FDB.options.set_disable_multi_version_client_api() -> nil
 
 
-Cluster objects
-===============
-
-.. class:: Cluster
-
-.. method:: Cluster.open_database(name="DB") -> Database
-
-    Opens a database with the given name.
-
-    .. note:: In this release, name **must** be "DB".
-
 .. _api-ruby-keys:
 
 Keys and values
 ===============
 
-|keys-values-blurb| 
+|keys-values-blurb|
 
 |keys-values-other-types-blurb|
 
@@ -498,9 +480,9 @@ Writing data
 
 .. method:: Transaction.[]=(key, value) -> nil
 
-    Alias of :meth:`Transaction.set`. 
+    Alias of :meth:`Transaction.set`.
 
-    .. note:: Although the above method returns nil, assignments in Ruby evaluate to the value assigned, so the expression ``tr[key] = value`` will return ``value``. 
+    .. note:: Although the above method returns nil, assignments in Ruby evaluate to the value assigned, so the expression ``tr[key] = value`` will return ``value``.
 
 .. method:: Transaction.clear(key) -> nil
 
@@ -564,7 +546,7 @@ In each of the methods below, ``param`` should be a string appropriately packed 
 .. method:: Transaction.byte_max(key, param) -> nil
 
     |atomic-byte-max|
-    
+
 .. method:: Transaction.min(key, param) -> nil
 
     |atomic-min1|
@@ -574,7 +556,7 @@ In each of the methods below, ``param`` should be a string appropriately packed 
 .. method:: Transaction.byte_min(key, param) -> nil
 
     |atomic-byte-min|
-    
+
 .. method:: Transaction.set_versionstamped_key(key, param) -> nil
 
     |atomic-set-versionstamped-key-1|
@@ -775,10 +757,6 @@ Transaction options
 
     |option-set-timeout-blurb3|
 
-.. method:: Transaction.options.set_durability_dev_null_is_web_scale() -> nil
-
-    |option-durability-dev-null-is-web-scale-blurb|
-
 .. _transact:
 
 The transact method
@@ -874,7 +852,7 @@ All future objects are a subclass of the :class:`Future` type.
 
             |future-cancel-blurb|
 
-        .. classmethod:: Future.wait_for_any(*futures) -> Fixnum
+        .. classmethod:: Future.wait_for_any(\*futures) -> Fixnum
 
             Does not return until at least one of the given future objects is ready. Returns the index in the parameter list of a ready future object.
 
@@ -987,19 +965,19 @@ In the FoundationDB Ruby API, a tuple is an :class:`Enumerable` of elements of t
 | Unicode string       | Any value ``v`` where ``v.kind_of? String == true`` and ``v.encoding`` is   | ``String`` with encoding ``Encoding::UTF_8``                                 |
 |                      | ``Encoding::UTF_8``                                                         |                                                                              |
 +----------------------+-----------------------------------------------------------------------------+------------------------------------------------------------------------------+
-| 64-bit signed integer| Any value ``v`` where ``v.kind_of? Integer == true`` and ``-2**64+1 <= v <= | ``Fixnum`` or ``Bignum`` (depending on the magnitude of the value)           |
-|                      | 2**64-1``                                                                   |                                                                              |
+| Integer              | Any value ``v`` where ``v.kind_of? Integer == true`` and                    | ``Integer``                                                                  |
+|                      | ``-2**2040+1 <= v <= 2**2040-1``                                            |                                                                              |
 +----------------------+-----------------------------------------------------------------------------+------------------------------------------------------------------------------+
 | Floating point number| Any value ``v`` where ``v.kind_of? FDB::Tuple::SingleFloat`` where          | :class:`FDB::Tuple::SingleFloat`                                             |
 | (single-precision)   | ``v.value.kind_of? Float`` and ``v.value`` fits inside an IEEE 754 32-bit   |                                                                              |
 |                      | floating-point number.                                                      |                                                                              |
 +----------------------+-----------------------------------------------------------------------------+------------------------------------------------------------------------------+
-| Floating point number| Any value ``v`` where ``v.kind_of? Float``                                  | ``Float``                                                                    | 
-| (double-precision)   |                                                                             |                                                                              | 
+| Floating point number| Any value ``v`` where ``v.kind_of? Float``                                  | ``Float``                                                                    |
+| (double-precision)   |                                                                             |                                                                              |
 +----------------------+-----------------------------------------------------------------------------+------------------------------------------------------------------------------+
 | Boolean              | Any value ``v`` where ``v.kind_of? Boolean``                                | ``Boolean``                                                                  |
 +----------------------+-----------------------------------------------------------------------------+------------------------------------------------------------------------------+
-| UUID                 | Any value ``v`` where ``v.kind_of? FDB::Tuple::UUID`` where                 | :class:`FDB::Tuple::UUID`                                                    | 
+| UUID                 | Any value ``v`` where ``v.kind_of? FDB::Tuple::UUID`` where                 | :class:`FDB::Tuple::UUID`                                                    |
 |                      | ``v.data.kind_of? String`` and ``v.data.encoding`` is ``Encoding::BINARY``  |                                                                              |
 |                      | and ``v.data.length == 16``                                                 |                                                                              |
 +----------------------+-----------------------------------------------------------------------------+------------------------------------------------------------------------------+
@@ -1215,7 +1193,7 @@ Directories
 .. method:: DirectoryLayer.exists?(db_or_tr, path) -> bool
 
     |directory-exists-blurb|
-    
+
 .. method:: DirectoryLayer.layer() -> String
 
     |directory-get-layer-blurb|

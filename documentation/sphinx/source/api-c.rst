@@ -13,7 +13,6 @@
 .. |reset-func-name| replace:: :func:`reset <fdb_transaction_reset()>`
 .. |reset-func| replace:: :func:`fdb_transaction_reset()`
 .. |cancel-func| replace:: :func:`fdb_transaction_cancel()`
-.. |init-func| replace:: FIXME
 .. |open-func| replace:: FIXME
 .. |set-cluster-file-func| replace:: FIXME
 .. |set-local-address-func| replace:: FIXME
@@ -118,7 +117,7 @@ API versioning
 
 Prior to including ``fdb_c.h``, you must define the :macro:`FDB_API_VERSION` macro. This, together with the :func:`fdb_select_api_version()` function, allows programs written against an older version of the API to compile and run with newer versions of the C library. The current version of the FoundationDB C API is |api-version|. ::
 
-  #define FDB_API_VERSION 510
+  #define FDB_API_VERSION 610
   #include <foundationdb/fdb_c.h>
 
 .. function:: fdb_error_t fdb_select_api_version(int version)
@@ -249,7 +248,7 @@ See :ref:`developer-guide-programming-with-futures` for further (language-indepe
 .. function:: fdb_error_t fdb_future_block_until_ready(FDBFuture* future)
 
    Blocks the calling thread until the given Future is ready. It will return success even if the Future is set to an error -- you must call :func:`fdb_future_get_error()` to determine that. :func:`fdb_future_block_until_ready()` will return an error only in exceptional conditions (e.g. out of memory or other operating system resources).
-   
+
    .. warning:: Never call this function from a callback passed to :func:`fdb_future_set_callback()`. This may block the thread on which :func:`fdb_run_network()` was invoked, resulting in a deadlock.
 
 .. function:: fdb_bool_t fdb_future_is_ready(FDBFuture* future)
@@ -292,22 +291,6 @@ See :ref:`developer-guide-programming-with-futures` for further (language-indepe
 
    |future-memory-mine|
 
-.. function:: fdb_error_t fdb_future_get_cluster(FDBFuture* future, FDBCluster** out_cluster)
-
-   Extracts a value of type :type:`FDBCluster*` from an :type:`FDBFuture` into a caller-provided variable. |future-warning|
-
-   |future-get-return1| |future-get-return2|.
-
-   |future-memory-yours1| :type:`FDBCluster` |future-memory-yours2| :func:`fdb_cluster_destroy()` |future-memory-yours3|
-
-.. function:: fdb_error_t fdb_future_get_database(FDBFuture* future, FDBDatabase** out_database)
-
-   Extracts a value of type :type:`FDBDatabase*` from an :type:`FDBFuture` into a caller-provided variable. |future-warning|
-
-   |future-get-return1| |future-get-return2|.
-
-   |future-memory-yours1| :type:`FDBDatabase` |future-memory-yours2| ``fdb_database_destroy(*out_database)`` |future-memory-yours3|
-
 .. function:: fdb_error_t fdb_future_get_value(FDBFuture* future, fdb_bool_t* out_present, uint8_t const** out_value, int* out_value_length)
 
    Extracts a database value from an :type:`FDBFuture` into caller-provided variables. |future-warning|
@@ -324,19 +307,19 @@ See :ref:`developer-guide-programming-with-futures` for further (language-indepe
       Set to the length of the value (in bytes).
 
    |future-memory-mine|
-   
+
 .. function:: fdb_error_t fdb_future_get_string_array(FDBFuture* future, const char*** out_strings, int* out_count)
 
     Extracts an array of null-terminated C strings from an :type:`FDBFuture` into caller-provided variables. |future-warning|
-    
+
     |future-get-return1| |future-get-return2|.
-    
+
     :data:`*out_strings`
       Set to point to the first string in the array.
-      
+
     :data:`*out_count`
       Set to the number of strings in the array.
-    
+
     |future-memory-mine|
 
 .. function:: fdb_error_t fdb_future_get_keyvalue_array(FDBFuture* future, FDBKeyValue const** out_kv, int* out_count, fdb_bool_t* out_more)
@@ -379,42 +362,6 @@ See :ref:`developer-guide-programming-with-futures` for further (language-indepe
    :data:`value_length`
       The length of the value pointed to by :data:`value`.
 
-Cluster
-=======
-
-.. type:: FDBCluster
-
-   An opaque type that represents a Cluster in the FoundationDB C API.
-
-.. function:: FDBFuture* fdb_create_cluster(const char* cluster_file_path)
-
-   |future-return0| an :type:`FDBCluster` object. |future-return1| call :func:`fdb_future_get_cluster()` to extract the :type:`FDBCluster` object, |future-return2|
-
-   :data:`cluster_file_path`
-      A NULL-terminated string giving a local path of a :ref:`cluster file <foundationdb-cluster-file>` (often called 'fdb.cluster') which contains connection information for the FoundationDB cluster. If cluster_file_path is NULL or an empty string, then a :ref:`default cluster file <default-cluster-file>` will be used.
-
-.. function:: void fdb_cluster_destroy(FDBCluster* cluster)
-
-   Destroys an :type:`FDBCluster` object. It must be called exactly once for each successful call to :func:`fdb_future_get_cluster()`. This function only destroys a handle to the cluster -- your cluster will be fine!
-
-.. function:: fdb_error_t fdb_cluster_set_option(FDBCluster* cluster, FDBClusterOption option, uint8_t const* value, int value_length)
-
-   Called to set an option on an :type:`FDBCluster`. |option-parameter| :func:`fdb_cluster_set_option()` returns.
-
-.. type:: FDBClusterOption
-
-   |option-doc|
-
-.. function:: FDBFuture* fdb_cluster_create_database(FDBCluster *cluster, uint8_t const* db_name, int db_name_length)
-
-   |future-return0| an :type:`FDBDatabase` object. |future-return1| call :func:`fdb_future_get_database()` to extract the :type:`FDBDatabase` object, |future-return2|
-
-   :data:`db_name`
-      A pointer to the name of the database to be opened. |no-null| In the current FoundationDB API, the database name *must* be "DB".
-
-   :data:`db_name_length`
-      |length-of| :data:`db_name`.
-
 Database
 ========
 
@@ -424,9 +371,19 @@ An |database-blurb1| Modifications to a database are performed via transactions.
 
    An opaque type that represents a database in the FoundationDB C API.
 
+.. function:: fdb_error_t fdb_create_database(const char* cluster_file_path, FDBDatabase** out_database)
+
+   Creates a new database connected the specified cluster. The caller assumes ownership of the :type:`FDBDatabase` object and must destroy it with :func:`fdb_database_destroy()`.
+
+   :data:`cluster_file_path`
+      A NULL-terminated string giving a local path of a :ref:`cluster file <foundationdb-cluster-file>` (often called 'fdb.cluster') which contains connection information for the FoundationDB cluster. If cluster_file_path is NULL or an empty string, then a :ref:`default cluster file <default-cluster-file>` will be used.
+
+   :data:`*out_database`
+      Set to point to the newly created :type:`FDBDatabase`.
+
 .. function:: void fdb_database_destroy(FDBDatabase* database)
 
-   Destroys an :type:`FDBDatabase` object. It must be called exactly once for each successful call to :func:`fdb_future_get_database()`. This function only destroys a handle to the database -- your database will be fine!
+   Destroys an :type:`FDBDatabase` object. It must be called exactly once for each successful call to :func:`fdb_create_database()`. This function only destroys a handle to the database -- your database will be fine!
 
 .. function:: fdb_error_t fdb_database_set_option(FDBDatabase* database, FDBDatabaseOption option, uint8_t const* value, int value_length)
 
@@ -512,15 +469,15 @@ Applications must provide error handling and an appropriate retry loop around th
 .. function:: FDBFuture* fdb_transaction_get_addresses_for_key(FDBTransaction* transaction, uint8_t const* key_name, int key_name_length)
 
     Returns a list of public network addresses as strings, one for each of the storage servers responsible for storing :data:`key_name` and its associated value.
-    
+
     |future-return0| an array of strings. |future-return1| call :func:`fdb_future_get_string_array()` to extract the string array, |future-return2|
-  
+
     :data:`key_name`
         A pointer to the name of the key whose location is to be queried.
-        
+
     :data:`key_name_length`
         |length-of| :data:`key_name`.
-  
+
 .. |range-limited-by| replace:: If this limit was reached before the end of the specified range, then the :data:`*more` return of :func:`fdb_future_get_keyvalue_array()` will be set to a non-zero value.
 
 .. function:: FDBFuture* fdb_transaction_get_range(FDBTransaction* transaction, uint8_t const* begin_key_name, int begin_key_name_length, fdb_bool_t begin_or_equal, int begin_offset, uint8_t const* end_key_name, int end_key_name_length, fdb_bool_t end_or_equal, int end_offset, int limit, int target_bytes, FDBStreamingMode mode, int iteration, fdb_bool_t snapshot, fdb_bool_t reverse)
@@ -637,52 +594,52 @@ Applications must provide error handling and an appropriate retry loop around th
 .. function:: void fdb_transaction_atomic_op(FDBTransaction* transaction, uint8_t const* key_name, int key_name_length, uint8_t const* param, int param_length, FDBMutationType operationType)
 
     |sets-and-clears1| to perform the operation indicated by ``operationType`` with operand ``param`` to the value stored by the given key.
-    
+
     |atomic-ops-blurb1|
-    
+
     |atomic-ops-blurb2|
-    
+
     |atomic-ops-blurb3|
-    
+
     .. warning :: |atomic-ops-warning|
-    
+
     |sets-and-clears2|
-    
+
     :data:`key_name`
         A pointer to the name of the key whose value is to be mutated.
-        
+
     :data:`key_name_length`
         |length-of| :data:`key_name`.
-        
+
     :data:`param`
         A pointer to the parameter with which the atomic operation will mutate the value associated with :data:`key_name`.
-        
+
     :data:`param_length`
         |length-of| :data:`param`.
-        
+
     :data:`operation_type`
         One of the :type:`FDBMutationType` values indicating which operation should be performed.
-        
+
 .. type:: FDBMutationType
 
     An enumeration of available opcodes to be passed to :func:`fdb_transaction_atomic_op()`
-    
+
     :data:`FDB_MUTATION_TYPE_ADD`
-    
+
     |atomic-add1|
-    
+
     |atomic-add2|
-    
+
     :data:`FDB_MUTATION_TYPE_AND`
-    
+
     |atomic-and|
-    
+
     :data:`FDB_MUTATION_TYPE_OR`
-    
+
     |atomic-or|
-    
+
     :data:`FDB_MUTATION_TYPE_XOR`
-    
+
     |atomic-xor|
 
     :data:`FDB_MUTATION_TYPE_MAX`
@@ -694,13 +651,13 @@ Applications must provide error handling and an appropriate retry loop around th
     :data:`FDB_MUTATION_TYPE_BYTE_MAX`
 
     |atomic-byte-max|
-    
+
     :data:`FDB_MUTATION_TYPE_MIN`
 
     |atomic-min1|
 
     |atomic-max-min|
-    
+
     :data:`FDB_MUTATION_TYPE_BYTE_MIN`
 
     |atomic-byte-min|
@@ -726,7 +683,7 @@ Applications must provide error handling and an appropriate retry loop around th
     |atomic-versionstamps-2|
 
     .. warning :: |atomic-versionstamps-tuple-warning-value|
-      
+
 .. function:: FDBFuture* fdb_transaction_commit(FDBTransaction* transaction)
 
    Attempts to commit the sets and clears previously applied to the database snapshot represented by :data:`transaction` to the actual database. The commit may or may not succeed -- in particular, if a conflicting transaction previously committed, then the commit must fail in order to preserve transactional isolation. If the commit does succeed, the transaction is durably committed to the database and all subsequently started transactions will observe its effects.
@@ -799,11 +756,11 @@ Applications must provide error handling and an appropriate retry loop around th
 .. function:: void fdb_transaction_cancel(FDBTransaction* transaction)
 
    |transaction-cancel-blurb|
-   
+
    .. warning :: |transaction-reset-cancel-warning|
-   
+
    .. warning :: |transaction-commit-cancel-warning|
-   
+
 .. _conflictRanges:
 
 .. function:: fdb_error_t fdb_transaction_add_conflict_range(FDBTransaction* transaction, uint8_t const* begin_key_name, int begin_key_name_length, uint8_t const* end_key_name, int end_key_name_length, FDBConflictRangeType type)

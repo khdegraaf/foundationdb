@@ -33,9 +33,8 @@ THREAD_FUNC networkThread(void* fdb) {
 }
 
 ACTOR Future<Void> _test() {
-	API *fdb = FDB::API::selectAPIVersion(510);
-	auto c = fdb->createCluster( std::string() );
-	auto db = c->createDatabase();
+	API *fdb = FDB::API::selectAPIVersion(610);
+	auto db = fdb->createDatabase();
 	state Reference<Transaction> tr( new Transaction(db) );
 
 	// tr->setVersion(1);
@@ -56,7 +55,7 @@ ACTOR Future<Void> _test() {
 	for ( i = 0; i < 100000; i++ ) {
 		Version v = wait( versions[i] );
 	}
-	// Void _ = wait( waitForAllReady( versions ) );
+	// wait( waitForAllReady( versions ) );
 	printf("Elapsed: %lf\n", timer_monotonic() - starttime );
 
 	tr->set( LiteralStringRef("foo"), LiteralStringRef("bar") );
@@ -77,7 +76,7 @@ ACTOR Future<Void> _test() {
 }
 
 void fdb_flow_test() {
-	API *fdb = FDB::API::selectAPIVersion(510);
+	API *fdb = FDB::API::selectAPIVersion(610);
 	fdb->setupNetwork();
 	startThread(networkThread, fdb);
 
@@ -87,7 +86,7 @@ void fdb_flow_test() {
 	g_nondeterministic_random = new DeterministicRandom(platform::getRandomSeed());
 	g_debug_random = new DeterministicRandom(platform::getRandomSeed());
 
-	g_network = newNet2( NetworkAddress(), false );
+	g_network = newNet2( false );
 
 	openTraceFile(NetworkAddress(), 1000000, 1000000, ".");
 	systemMonitor();
@@ -124,7 +123,7 @@ namespace FDB {
 		Future<Void> onReady = ready.getFuture();
 
 		throw_on_error( fdb_future_set_callback( f->f, backToFutureCallback, ready.extractRawPointer() ) );
-		Void _ = wait( onReady );
+		wait( onReady );
 
 		return convertValue( f );
 	}
@@ -189,13 +188,13 @@ namespace FDB {
 	}
 
 	Reference<Cluster> API::createCluster( std::string const& connFilename ) {
-		CFuture f( fdb_create_cluster( connFilename.c_str() ) );
-		f.blockUntilReady();
+		return Reference<Cluster>(new Cluster(connFilename));
+	}
 
-		FDBCluster* c;
-		throw_on_error( fdb_future_get_cluster( f.f, &c ) );
-
-		return Reference<Cluster>( new Cluster(c) );
+	Reference<DatabaseContext> API::createDatabase(std::string const& connFilename) {
+		FDBDatabase *db;
+		throw_on_error(fdb_create_database(connFilename.c_str(), &db));
+		return Reference<DatabaseContext>(new DatabaseContext(db));
 	}
 
 	int API::getAPIVersion() const {
@@ -203,14 +202,7 @@ namespace FDB {
 	}
 
 	Reference<DatabaseContext> Cluster::createDatabase() {
-		const char *dbName = "DB";
-		CFuture f( fdb_cluster_create_database( c, (uint8_t*)dbName, (int)strlen(dbName) ) );
-		f.blockUntilReady();
-
-		FDBDatabase* db;
-		throw_on_error( fdb_future_get_database( f.f, &db ) );
-
-		return Reference<DatabaseContext>( new DatabaseContext(db) );
+		return API::getInstance()->createDatabase(connFilename.c_str());
 	}
 
 	void DatabaseContext::setDatabaseOption(FDBDatabaseOption option, Optional<StringRef> value) {

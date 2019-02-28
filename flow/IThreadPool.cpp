@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-#include "IThreadPool.h"
+#include "flow/IThreadPool.h"
 
 #include <algorithm>
 #define BOOST_SYSTEM_NO_LIB
@@ -35,7 +35,7 @@ class ThreadPool : public IThreadPool, public ReferenceCounted<ThreadPool> {
 		Event stopped;
 		static thread_local IThreadPoolReceiver* threadUserObject;
 		explicit Thread(ThreadPool *pool, IThreadPoolReceiver *userObject) : pool(pool), userObject(userObject) {}
-		~Thread() { ASSERT(!userObject); }
+		~Thread() { ASSERT_ABORT(!userObject); }
 
 		void run() {
 			deprioritizeThread();

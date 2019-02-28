@@ -71,14 +71,15 @@ public class Tuple implements Comparable<Tuple>, Iterable<Object> {
 	private static IterableComparator comparator = new IterableComparator();
 
 	private List<Object> elements;
+	private int memoizedHash = 0;
 
 	private Tuple(List<? extends Object> elements, Object newItem) {
-		this(new LinkedList<Object>(elements));
+		this(elements);
 		this.elements.add(newItem);
 	}
 
 	private Tuple(List<? extends Object> elements) {
-		this.elements = new ArrayList<Object>(elements);
+		this.elements = new ArrayList<>(elements);
 	}
 
 	/**
@@ -759,14 +760,28 @@ public class Tuple implements Comparable<Tuple>, Iterable<Object> {
 	}
 
 	/**
-	 * Returns a hash code value for this {@code Tuple}.
+	 * Returns a hash code value for this {@code Tuple}. Computing the hash code is fairly expensive
+	 *  as it involves packing the underlying {@code Tuple} to bytes. However, this value is memoized,
+	 *  so for any given {@code Tuple}, it only needs to be computed once. This means that it is
+	 *  generally safe to use {@code Tuple}s with hash-based data structures such as
+	 *  {@link java.util.HashSet HashSet}s or {@link java.util.HashMap HashMap}s.
 	 * {@inheritDoc}
 	 *
 	 * @return a hash code for this {@code Tuple} that can be used by hash tables
 	 */
 	@Override
 	public int hashCode() {
-		return Arrays.hashCode(this.pack());
+		if(memoizedHash == 0) {
+			byte[] packed;
+			if(hasIncompleteVersionstamp()) {
+				packed = packWithVersionstamp(null);
+			}
+			else {
+				packed = pack();
+			}
+			memoizedHash = Arrays.hashCode(packed);
+		}
+		return memoizedHash;
 	}
 
 	/**
@@ -781,8 +796,10 @@ public class Tuple implements Comparable<Tuple>, Iterable<Object> {
 	public boolean equals(Object o) {
 		if(o == null)
 			return false;
+		if(o == this)
+			return true;
 		if(o instanceof Tuple) {
-			return Arrays.equals(this.pack(), ((Tuple) o).pack());
+			return compareTo((Tuple)o) == 0;
 		}
 		return false;
 	}
@@ -961,6 +978,14 @@ public class Tuple implements Comparable<Tuple>, Iterable<Object> {
 		System.out.println("t2.getNestedList(17): " + t2.getNestedList(17));
 		System.out.println("t2.getNestedTuple(17): " + t2.getNestedTuple(17));
 		System.out.println("t2.getVersionstamp(20): " + t2.getVersionstamp(20));
+
+		int currOffset = 0;
+		for (Object item : t) {
+			int length = Tuple.from(item).pack().length;
+			Tuple t3 = Tuple.fromBytes(bytes, currOffset, length);
+			System.out.println("item = " + t3);
+			currOffset += length;
+		}
 
 		System.out.println("(2*(Long.MAX_VALUE+1),) = " + ByteArrayUtil.printable(Tuple.from(
 				BigInteger.valueOf(Long.MAX_VALUE).add(BigInteger.ONE).shiftLeft(1)

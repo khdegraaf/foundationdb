@@ -18,8 +18,8 @@
  * limitations under the License.
  */
 
-#include "network.h"
-#include "flow.h"
+#include "flow/network.h"
+#include "flow/flow.h"
 
 NetworkAddress NetworkAddress::parse( std::string const& s ) {
 	bool isTLS = false;
@@ -79,6 +79,6 @@ Future<Reference<IConnection>> INetworkConnections::connect( std::string host, s
 	// Template types are being provided explicitly because they can't be automatically deduced for some reason.
 	return mapAsync<NetworkAddress, std::function<Future<Reference<IConnection>>(NetworkAddress const &)>, Reference<IConnection> >
 		(pickEndpoint, [=](NetworkAddress const &addr) -> Future<Reference<IConnection>> {
-		return connect(addr);
+		return connect(addr, host);
 	});
 }

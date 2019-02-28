@@ -18,9 +18,9 @@
  * limitations under the License.
  */
 
-#include "Knobs.h"
-#include "FDBTypes.h"
-#include "SystemData.h"
+#include "fdbclient/Knobs.h"
+#include "fdbclient/FDBTypes.h"
+#include "fdbclient/SystemData.h"
 
 ClientKnobs const* CLIENT_KNOBS = new ClientKnobs();
 
@@ -35,10 +35,12 @@ ClientKnobs::ClientKnobs(bool randomize) {
 
 	init( SYSTEM_MONITOR_INTERVAL,                 5.0 );
 
-	init( FAILURE_MAX_DELAY,                      10.0 ); if( randomize && BUGGIFY ) FAILURE_MAX_DELAY = 5.0;
-	init( FAILURE_MIN_DELAY,                       5.0 ); if( randomize && BUGGIFY ) FAILURE_MIN_DELAY = 2.0;
+	init( FAILURE_MAX_DELAY,                       5.0 );
+	init( FAILURE_MIN_DELAY,                       4.0 ); if( randomize && BUGGIFY ) FAILURE_MIN_DELAY = 1.0;
 	init( FAILURE_TIMEOUT_DELAY,     FAILURE_MIN_DELAY );
 	init( CLIENT_FAILURE_TIMEOUT_DELAY, FAILURE_MIN_DELAY );
+	init( FAILURE_EMERGENCY_DELAY,                30.0 );
+	init( FAILURE_MAX_GENERATIONS,                  10 );
 
 	// wrong_shard_server sometimes comes from the only nonfailed server, so we need to avoid a fast spin
 
@@ -48,6 +50,8 @@ ClientKnobs::ClientKnobs(bool randomize) {
 	init( DEFAULT_BACKOFF,                         .01 ); if( randomize && BUGGIFY ) DEFAULT_BACKOFF = g_random->random01();
 	init( DEFAULT_MAX_BACKOFF,                     1.0 );
 	init( BACKOFF_GROWTH_RATE,                     2.0 );
+	init( RESOURCE_CONSTRAINED_MAX_BACKOFF,       30.0 );
+	init( PROXY_COMMIT_OVERHEAD_BYTES,              23 ); //The size of serializing 7 tags (3 primary, 3 remote, 1 log router) + 2 for the tag length
 
 	init( TRANSACTION_SIZE_LIMIT,                  1e7 );
 	init( KEY_SIZE_LIMIT,                          1e4 );
@@ -58,7 +62,7 @@ ClientKnobs::ClientKnobs(bool randomize) {
 	init( MAX_BATCH_SIZE,                           20 ); if( randomize && BUGGIFY ) MAX_BATCH_SIZE = 1; // Note that SERVER_KNOBS->START_TRANSACTION_MAX_BUDGET_SIZE is set to match this value
 	init( GRV_BATCH_TIMEOUT,                     0.005 ); if( randomize && BUGGIFY ) GRV_BATCH_TIMEOUT = 0.1;
 
-	init( LOCATION_CACHE_EVICTION_SIZE,         100000 );
+	init( LOCATION_CACHE_EVICTION_SIZE,         300000 );
 	init( LOCATION_CACHE_EVICTION_SIZE_SIM,         10 ); if( randomize && BUGGIFY ) LOCATION_CACHE_EVICTION_SIZE_SIM = 3;
 
 	init( GET_RANGE_SHARD_LIMIT,                     2 );
@@ -76,7 +80,7 @@ ClientKnobs::ClientKnobs(bool randomize) {
 	init( WATCH_POLLING_TIME,                      1.0 ); if( randomize && BUGGIFY ) WATCH_POLLING_TIME = 5.0;
 	init( NO_RECENT_UPDATES_DURATION,             20.0 ); if( randomize && BUGGIFY ) NO_RECENT_UPDATES_DURATION = 0.1;
 	init( FAST_WATCH_TIMEOUT,                     20.0 ); if( randomize && BUGGIFY ) FAST_WATCH_TIMEOUT = 1.0;
-	init( WATCH_TIMEOUT,                         900.0 ); if( randomize ) WATCH_TIMEOUT = 20.0;
+	init( WATCH_TIMEOUT,                         900.0 ); if( randomize && BUGGIFY ) WATCH_TIMEOUT = 20.0;
 
 	// Core
 	init( CORE_VERSIONSPERSECOND,		           1e6 );
@@ -116,13 +120,13 @@ ClientKnobs::ClientKnobs(bool randomize) {
 	init( BACKUP_MAP_KEY_UPPER_LIMIT,              1e5 ); if( buggifyMapLimits ) BACKUP_MAP_KEY_UPPER_LIMIT = 30;
 	init( BACKUP_COPY_TASKS,                        90 );
 	init( BACKUP_BLOCK_SIZE,   LOG_RANGE_BLOCK_SIZE/10 );
-	init( BACKUP_TASKS_PER_AGENT,                   20 );
+	init( BACKUP_TASKS_PER_AGENT,                   10 );
 	init( SIM_BACKUP_TASKS_PER_AGENT,               10 );
 	init( BACKUP_RANGEFILE_BLOCK_SIZE,      1024 * 1024);
 	init( BACKUP_LOGFILE_BLOCK_SIZE,        1024 * 1024);
 	init( BACKUP_DISPATCH_ADDTASK_SIZE,             50 );
 	init( RESTORE_DISPATCH_ADDTASK_SIZE,           150 );
-	init( RESTORE_DISPATCH_BATCH_SIZE,           30000 ); if( randomize && BUGGIFY ) RESTORE_DISPATCH_BATCH_SIZE = 1;
+	init( RESTORE_DISPATCH_BATCH_SIZE,           30000 ); if( randomize && BUGGIFY ) RESTORE_DISPATCH_BATCH_SIZE = 20;
 	init( RESTORE_WRITE_TX_SIZE,            256 * 1024 );
 	init( APPLY_MAX_LOCK_BYTES,                    1e9 );
 	init( APPLY_MIN_LOCK_BYTES,                   11e6 ); //Must be bigger than TRANSACTION_SIZE_LIMIT
@@ -144,6 +148,7 @@ ClientKnobs::ClientKnobs(bool randomize) {
 	init( HTTP_READ_SIZE,                     128*1024 );
 	init( HTTP_SEND_SIZE,                      32*1024 );
 	init( HTTP_VERBOSE_LEVEL,                        0 );
+	init( HTTP_REQUEST_ID_HEADER,                   "" );
 	init( BLOBSTORE_CONNECT_TRIES,                  10 );
 	init( BLOBSTORE_CONNECT_TIMEOUT,                10 );
 	init( BLOBSTORE_MAX_CONNECTION_LIFE,           120 );
@@ -167,6 +172,11 @@ ClientKnobs::ClientKnobs(bool randomize) {
 	init( BLOBSTORE_MAX_SEND_BYTES_PER_SECOND,      1e9 );
 	init( BLOBSTORE_MAX_RECV_BYTES_PER_SECOND,      1e9 );
 
+	init( BLOBSTORE_LIST_REQUESTS_PER_SECOND,       200 );
+	init( BLOBSTORE_WRITE_REQUESTS_PER_SECOND,       50 );
+	init( BLOBSTORE_READ_REQUESTS_PER_SECOND,       100 );
+	init( BLOBSTORE_DELETE_REQUESTS_PER_SECOND,     200 );
+
 	// Client Status Info
 	init(CSI_SAMPLING_PROBABILITY, -1.0);
 	init(CSI_SIZE_LIMIT, std::numeric_limits<int64_t>::max());
@@ -176,6 +186,7 @@ ClientKnobs::ClientKnobs(bool randomize) {
 	}
 	init(CSI_STATUS_DELAY,						  10.0  );
 
-	init( CONSISTENCY_CHECK_RATE_LIMIT,            50e6 );
-	init( CONSISTENCY_CHECK_RATE_WINDOW,            1.0 );
+	init( CONSISTENCY_CHECK_RATE_LIMIT_MAX,		  50e6 );
+	init( CONSISTENCY_CHECK_ONE_ROUND_TARGET_COMPLETION_TIME,	7 * 24 * 60 * 60 ); // 7 days
+	init( CONSISTENCY_CHECK_RATE_WINDOW,		  1.0  );
 }

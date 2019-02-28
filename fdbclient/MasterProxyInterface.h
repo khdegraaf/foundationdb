@@ -1,3 +1,4 @@
+
 /*
  * MasterProxyInterface.h
  *
@@ -22,12 +23,15 @@
 #define FDBCLIENT_MASTERPROXYINTERFACE_H
 #pragma once
 
-#include "FDBTypes.h"
-#include "StorageServerInterface.h"
-#include "CommitTransaction.h"
+#include "fdbclient/FDBTypes.h"
+#include "fdbclient/StorageServerInterface.h"
+#include "fdbclient/CommitTransaction.h"
+
+#include "flow/Stats.h"
 
 struct MasterProxyInterface {
 	enum { LocationAwareLoadBalance = 1 };
+	enum { AlwaysFresh = 1 };
 
 	LocalityData locality;
 	RequestStream< struct CommitTransactionRequest > commit;
@@ -45,18 +49,18 @@ struct MasterProxyInterface {
 	std::string toString() const { return id().shortString(); }
 	bool operator == (MasterProxyInterface const& r) const { return id() == r.id(); }
 	bool operator != (MasterProxyInterface const& r) const { return id() != r.id(); }
-	NetworkAddress address() const { return commit.getEndpoint().address; }
+	NetworkAddress address() const { return commit.getEndpoint().getPrimaryAddress(); }
 
 	template <class Archive>
 	void serialize(Archive& ar) {
-		ar & locality & commit & getConsistentReadVersion & getKeyServersLocations & waitFailure & getStorageServerRejoinInfo & getRawCommittedVersion & txnState;
+		serializer(ar, locality, commit, getConsistentReadVersion, getKeyServersLocations, waitFailure, getStorageServerRejoinInfo, getRawCommittedVersion, txnState);
 	}
 
 	void initEndpoints() {
 		getConsistentReadVersion.getEndpoint(TaskProxyGetConsistentReadVersion);
 		getRawCommittedVersion.getEndpoint(TaskProxyGetRawCommittedVersion);
-		commit.getEndpoint(TaskProxyCommit);
-		getKeyServersLocations.getEndpoint(TaskProxyGetKeyServersLocations);
+		commit.getEndpoint(TaskProxyCommitDispatcher);
+		//getKeyServersLocations.getEndpoint(TaskProxyGetKeyServersLocations); //do not increase the priority of these requests, because clients cans bring down the cluster with too many of these messages.
 	}
 };
 
@@ -66,14 +70,14 @@ struct CommitID {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		ar & version & txnBatchId;
+		serializer(ar, version, txnBatchId);
 	}
 
 	CommitID() : version(invalidVersion), txnBatchId(0) {}
 	CommitID( Version version, uint16_t txnBatchId ) : version(version), txnBatchId(txnBatchId) {}
 };
 
-struct CommitTransactionRequest {
+struct CommitTransactionRequest : TimedRequest {
 	enum { 
 		FLAG_IS_LOCK_AWARE = 0x1,
 		FLAG_FIRST_IN_BATCH = 0x2
@@ -92,16 +96,16 @@ struct CommitTransactionRequest {
 
 	template <class Ar> 
 	void serialize(Ar& ar) { 
-		ar & transaction & reply & arena & flags & debugID;
+		serializer(ar, transaction, reply, arena, flags, debugID);
 	}
 };
 
-static inline int getBytes( CommitTransactionRequest const& r ) { 
+static inline int getBytes( CommitTransactionRequest const& r ) {
 	// SOMEDAY: Optimize
 	//return r.arena.getSize(); // NOT correct because arena can be shared!
 	int total = sizeof(r);
 	for(auto m = r.transaction.mutations.begin(); m != r.transaction.mutations.end(); ++m)
-		total += m->expectedSize();
+		total += m->expectedSize() + CLIENT_KNOBS->PROXY_COMMIT_OVERHEAD_BYTES;
 	for(auto i = r.transaction.read_conflict_ranges.begin(); i != r.transaction.read_conflict_ranges.end(); ++i)
 		total += i->expectedSize();
 	for(auto i = r.transaction.write_conflict_ranges.begin(); i != r.transaction.write_conflict_ranges.end(); ++i)
@@ -115,11 +119,11 @@ struct GetReadVersionReply {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		ar & version & locked;
+		serializer(ar, version, locked);
 	}
 };
 
-struct GetReadVersionRequest {
+struct GetReadVersionRequest : TimedRequest {
 	enum { 
 		PRIORITY_SYSTEM_IMMEDIATE = 15 << 24,  // Highest possible priority, always executed even if writes are otherwise blocked
 		PRIORITY_DEFAULT = 8 << 24,
@@ -143,7 +147,7 @@ struct GetReadVersionRequest {
 
 	template <class Ar> 
 	void serialize(Ar& ar) { 
-		ar & transactionCount & flags & debugID & reply;
+		serializer(ar, transactionCount, flags, debugID, reply);
 	}
 };
 
@@ -153,7 +157,7 @@ struct GetKeyServerLocationsReply {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		ar & results & arena;
+		serializer(ar, results, arena);
 	}
 };
 
@@ -170,7 +174,7 @@ struct GetKeyServerLocationsRequest {
 	
 	template <class Ar> 
 	void serialize(Ar& ar) { 
-		ar & begin & end & limit & reverse & reply & arena;
+		serializer(ar, begin, end, limit, reverse, reply, arena);
 	}
 };
 
@@ -182,7 +186,7 @@ struct GetRawCommittedVersionRequest {
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & debugID & reply;
+		serializer(ar, debugID, reply);
 	}
 };
 
@@ -195,7 +199,7 @@ struct GetStorageServerRejoinInfoReply {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		ar & version & tag & newTag & newLocality & history;
+		serializer(ar, version, tag, newTag, newLocality, history);
 	}
 };
 
@@ -209,7 +213,7 @@ struct GetStorageServerRejoinInfoRequest {
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & id & dcId & reply;
+		serializer(ar, id, dcId, reply);
 	}
 };
 
@@ -222,7 +226,7 @@ struct TxnStateRequest {
 
 	template <class Ar> 
 	void serialize(Ar& ar) { 
-		ar & data & sequence & last & reply & arena;
+		serializer(ar, data, sequence, last, reply, arena);
 	}
 };
 

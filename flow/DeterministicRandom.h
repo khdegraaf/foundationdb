@@ -23,7 +23,7 @@
 #pragma once
 
 #include <cinttypes>
-#include "IRandom.h"
+#include "flow/IRandom.h"
 
 #include <random>
 
@@ -35,7 +35,7 @@ private:
 	uint64_t gen64() {
 		uint64_t curr = next;
 		next = (uint64_t(random()) << 32) ^ random();
-		if (TRACE_SAMPLE()) TraceEvent(SevSample, "random");
+		if (TRACE_SAMPLE()) TraceEvent(SevSample, "Random");
 		return curr;
 	}
 

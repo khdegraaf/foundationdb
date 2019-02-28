@@ -25,11 +25,13 @@
 #include "fdbclient/ClusterInterface.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "fdbclient/MasterProxyInterface.h"
-#include "DatabaseConfiguration.h"
-#include "MasterInterface.h"
-#include "TLogInterface.h"
-#include "WorkerInterface.h"
-#include "Knobs.h"
+#include "fdbclient/DatabaseConfiguration.h"
+#include "fdbserver/DataDistributorInterface.h"
+#include "fdbserver/MasterInterface.h"
+#include "fdbserver/RecoveryState.h"
+#include "fdbserver/TLogInterface.h"
+#include "fdbserver/WorkerInterface.actor.h"
+#include "fdbserver/Knobs.h"
 
 // This interface and its serialization depend on slicing, since the client will deserialize only the first part of this structure
 struct ClusterControllerFullInterface {
@@ -60,22 +62,23 @@ struct ClusterControllerFullInterface {
 	template <class Ar>
 	void serialize( Ar& ar ) {
 		ASSERT( ar.protocolVersion() >= 0x0FDB00A200040001LL );
-		ar & clientInterface & recruitFromConfiguration & recruitRemoteFromConfiguration & recruitStorage & registerWorker & getWorkers & registerMaster & getServerDBInfo;
+		serializer(ar, clientInterface, recruitFromConfiguration, recruitRemoteFromConfiguration, recruitStorage, registerWorker, getWorkers, registerMaster, getServerDBInfo);
 	}
 };
 
 struct RecruitFromConfigurationRequest {
 	DatabaseConfiguration configuration;
 	bool recruitSeedServers;
+	int maxOldLogRouters;
 	ReplyPromise< struct RecruitFromConfigurationReply > reply;
 
 	RecruitFromConfigurationRequest() {}
-	explicit RecruitFromConfigurationRequest(DatabaseConfiguration const& configuration, bool recruitSeedServers)
-		: configuration(configuration), recruitSeedServers(recruitSeedServers) {}
+	explicit RecruitFromConfigurationRequest(DatabaseConfiguration const& configuration, bool recruitSeedServers, int maxOldLogRouters)
+		: configuration(configuration), recruitSeedServers(recruitSeedServers), maxOldLogRouters(maxOldLogRouters) {}
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & configuration & recruitSeedServers & reply;
+		serializer(ar, configuration, recruitSeedServers, maxOldLogRouters, reply);
 	}
 };
 
@@ -85,12 +88,15 @@ struct RecruitFromConfigurationReply {
 	vector<WorkerInterface> proxies;
 	vector<WorkerInterface> resolvers;
 	vector<WorkerInterface> storageServers;
-	int logRouterCount;
+	vector<WorkerInterface> oldLogRouters;
 	Optional<Key> dcId;
+	bool satelliteFallback;
+
+	RecruitFromConfigurationReply() : satelliteFallback(false) {}
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & tLogs & satelliteTLogs & proxies & resolvers & storageServers & dcId & logRouterCount;
+		serializer(ar, tLogs, satelliteTLogs, proxies, resolvers, storageServers, oldLogRouters, dcId, satelliteFallback);
 	}
 };
 
@@ -105,7 +111,7 @@ struct RecruitRemoteFromConfigurationRequest {
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & configuration & dcId & logRouterCount & reply;
+		serializer(ar, configuration, dcId, logRouterCount, reply);
 	}
 };
 
@@ -115,7 +121,7 @@ struct RecruitRemoteFromConfigurationReply {
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & remoteTLogs & logRouters;
+		serializer(ar, remoteTLogs, logRouters);
 	}
 };
 
@@ -125,7 +131,7 @@ struct RecruitStorageReply {
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & worker & processClass;
+		serializer(ar, worker, processClass);
 	}
 };
 
@@ -138,7 +144,7 @@ struct RecruitStorageRequest {
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & excludeMachines & excludeAddresses & includeDCs & criticalRecruitment & reply;
+		serializer(ar, excludeMachines, excludeAddresses, includeDCs, criticalRecruitment, reply);
 	}
 };
 
@@ -151,7 +157,7 @@ struct RegisterWorkerReply {
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & processClass & priorityInfo;
+		serializer(ar, processClass, priorityInfo);
 	}
 };
 
@@ -161,15 +167,16 @@ struct RegisterWorkerRequest {
 	ProcessClass processClass;
 	ClusterControllerPriorityInfo priorityInfo;
 	Generation generation;
+	Optional<DataDistributorInterface> distributorInterf;
 	ReplyPromise<RegisterWorkerReply> reply;
 
 	RegisterWorkerRequest() : priorityInfo(ProcessClass::UnsetFit, false, ClusterControllerPriorityInfo::FitnessUnknown) {}
-	RegisterWorkerRequest(WorkerInterface wi, ProcessClass initialClass, ProcessClass processClass, ClusterControllerPriorityInfo priorityInfo, Generation generation) : 
-	wi(wi), initialClass(initialClass), processClass(processClass), priorityInfo(priorityInfo), generation(generation) {}
+	RegisterWorkerRequest(WorkerInterface wi, ProcessClass initialClass, ProcessClass processClass, ClusterControllerPriorityInfo priorityInfo, Generation generation, Optional<DataDistributorInterface> ddInterf) :
+	wi(wi), initialClass(initialClass), processClass(processClass), priorityInfo(priorityInfo), generation(generation), distributorInterf(ddInterf) {}
 
 	template <class Ar>
 	void serialize( Ar& ar ) {
-		ar & wi & initialClass & processClass & priorityInfo & generation & reply;
+		serializer(ar, wi, initialClass, processClass, priorityInfo, generation, distributorInterf, reply);
 	}
 };
 
@@ -184,12 +191,11 @@ struct GetWorkersRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		ar & flags & reply;
+		serializer(ar, flags, reply);
 	}
 };
 
 struct RegisterMasterRequest {
-	Standalone<StringRef> dbName;
 	UID id;
 	LocalityData mi;
 	LogSystemConfig logSystemConfig;
@@ -199,8 +205,9 @@ struct RegisterMasterRequest {
 	int64_t registrationCount;
 	Optional<DatabaseConfiguration> configuration;
 	vector<UID> priorCommittedLogServers;
-	int recoveryState;
-	
+	RecoveryState recoveryState;
+	bool recoveryStalled;
+
 	ReplyPromise<Void> reply;
 
 	RegisterMasterRequest() {}
@@ -208,7 +215,7 @@ struct RegisterMasterRequest {
 	template <class Ar>
 	void serialize( Ar& ar ) {
 		ASSERT( ar.protocolVersion() >= 0x0FDB00A200040001LL );
-		ar & dbName & id & mi & logSystemConfig & proxies & resolvers & recoveryCount & registrationCount & configuration & priorCommittedLogServers & recoveryState & reply;
+		serializer(ar, id, mi, logSystemConfig, proxies, resolvers, recoveryCount, registrationCount, configuration, priorCommittedLogServers, recoveryState, recoveryStalled, reply);
 	}
 };
 
@@ -220,10 +227,10 @@ struct GetServerDBInfoRequest {
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		ar & knownServerInfoID & issues & incompatiblePeers & reply;
+		serializer(ar, knownServerInfoID, issues, incompatiblePeers, reply);
 	}
 };
 
-#include "ServerDBInfo.h" // include order hack
+#include "fdbserver/ServerDBInfo.h" // include order hack
 
 #endif

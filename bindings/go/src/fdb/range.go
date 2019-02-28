@@ -23,7 +23,7 @@
 package fdb
 
 /*
- #define FDB_API_VERSION 520
+ #define FDB_API_VERSION 610
  #include <foundationdb/fdb_c.h>
 */
 import "C"
@@ -90,7 +90,11 @@ type ExactRange interface {
 // that the default zero-value of KeyRange specifies an empty range before all
 // keys in the database.
 type KeyRange struct {
-	Begin, End KeyConvertible
+	// The (inclusive) beginning of the range
+	Begin KeyConvertible
+
+	// The (exclusive) end of the range
+	End KeyConvertible
 }
 
 // FDBRangeKeys allows KeyRange to satisfy the ExactRange interface.
@@ -247,7 +251,7 @@ func (ri *RangeIterator) fetchNextBatch() {
 		ri.sr.Begin = FirstGreaterThan(ri.kvs[ri.index-1].Key)
 	}
 
-	ri.iteration += 1
+	ri.iteration++
 
 	f := ri.t.doGetRange(ri.sr, ri.options, ri.snapshot, ri.iteration)
 	ri.f = &f
@@ -265,7 +269,7 @@ func (ri *RangeIterator) Get() (kv KeyValue, e error) {
 
 	kv = ri.kvs[ri.index]
 
-	ri.index += 1
+	ri.index++
 
 	if ri.index == len(ri.kvs) {
 		ri.fetchNextBatch()
@@ -286,12 +290,14 @@ func (ri *RangeIterator) MustGet() KeyValue {
 	return kv
 }
 
+// Strinc returns the first key that would sort outside the range prefixed by
+// prefix, or an error if prefix is empty or contains only 0xFF bytes.
 func Strinc(prefix []byte) ([]byte, error) {
 	for i := len(prefix) - 1; i >= 0; i-- {
 		if prefix[i] != 0xFF {
 			ret := make([]byte, i+1)
 			copy(ret, prefix[:i+1])
-			ret[i] += 1
+			ret[i]++
 			return ret, nil
 		}
 	}
@@ -311,7 +317,7 @@ func PrefixRange(prefix []byte) (KeyRange, error) {
 	copy(begin, prefix)
 	end, e := Strinc(begin)
 	if e != nil {
-		return KeyRange{}, nil
+		return KeyRange{}, e
 	}
 	return KeyRange{Key(begin), Key(end)}, nil
 }

@@ -18,16 +18,16 @@
  * limitations under the License.
  */
 
-#include "fdbclient/NativeAPI.h"
-#include "ClusterRecruitmentInterface.h"
-#include "MoveKeys.h"
-#include "LogSystem.h"
+#include "fdbclient/NativeAPI.actor.h"
+#include "fdbserver/ClusterRecruitmentInterface.h"
+#include "fdbserver/MoveKeys.actor.h"
+#include "fdbserver/LogSystem.h"
 
 struct RelocateShard {
 	KeyRange keys;
 	int priority;
 
-	RelocateShard() {}
+	RelocateShard() : priority(0) {}
 	RelocateShard( KeyRange const& keys, int priority ) : keys(keys), priority(priority) {}
 };
 
@@ -46,6 +46,7 @@ enum {
 	PRIORITY_MERGE_SHARD     = 240,
 	PRIORITY_SPLIT_SHARD     = 250,
 
+	PRIORITY_TEAM_REDUNDANT  = 700,
 	PRIORITY_TEAM_UNHEALTHY  = 800,
 	PRIORITY_TEAM_2_LEFT     = 809,
 
@@ -154,9 +155,14 @@ public:
 
 	int getNumberOfShards( UID ssID );
 	vector<KeyRange> getShardsFor( Team team );
-	vector<Team> getTeamsFor( KeyRangeRef keys );
+
+	//The first element of the pair is either the source for non-moving shards or the destination team for in-flight shards
+	//The second element of the pair is all previous sources for in-flight shards
+	std::pair<vector<Team>,vector<Team>> getTeamsFor( KeyRangeRef keys );
+
 	void defineShard( KeyRangeRef keys );
 	void moveShard( KeyRangeRef keys, std::vector<Team> destinationTeam );
+	void finishMove( KeyRangeRef keys );
 	void check();
 private:
 	struct OrderByTeamKey {
@@ -167,7 +173,7 @@ private:
 		}
 	};
 
-	KeyRangeMap< vector<Team> > shard_teams;	// A shard can be affected by the failure of multiple teams if it is a queued merge
+	KeyRangeMap< std::pair<vector<Team>,vector<Team>> > shard_teams;	// A shard can be affected by the failure of multiple teams if it is a queued merge, or when usable_regions > 1
 	std::set< std::pair<Team,KeyRange>, OrderByTeamKey > team_shards;
 	std::map< UID, int > storageServerShards;
 
@@ -175,7 +181,8 @@ private:
 	void insert(Team team, KeyRange const& range);
 };
 
-struct ShardInfo {
+// DDShardInfo is so named to avoid link-time name collision with ShardInfo within the StorageServer
+struct DDShardInfo {
 	Key key;
 	vector<UID> primarySrc;
 	vector<UID> remoteSrc;
@@ -183,7 +190,7 @@ struct ShardInfo {
 	vector<UID> remoteDest;
 	bool hasDest;
 
-	explicit ShardInfo(Key key) : key(key), hasDest(false) {}
+	explicit DDShardInfo(Key key) : key(key), hasDest(false) {}
 };
 
 struct InitialDataDistribution : ReferenceCounted<InitialDataDistribution> {
@@ -191,41 +198,33 @@ struct InitialDataDistribution : ReferenceCounted<InitialDataDistribution> {
 	vector<std::pair<StorageServerInterface, ProcessClass>> allServers;
 	std::set<vector<UID>> primaryTeams;
 	std::set<vector<UID>> remoteTeams;
-	vector<ShardInfo> shards;
+	vector<DDShardInfo> shards;
 };
-
-Future<Void> dataDistribution(
-	Reference<AsyncVar<struct ServerDBInfo>> const& db,
-	MasterInterface const& mi, DatabaseConfiguration const& configuration,
-	PromiseStream< std::pair<UID, Optional<StorageServerInterface>> > const& serverChanges,
-	Reference<ILogSystem> const& logSystem,
-	Version const& recoveryCommitVersion,
-	std::vector<Optional<Key>> const& primaryDcId,
-	std::vector<Optional<Key>> const& remoteDcIds,
-	double* const& lastLimited);
 
 Future<Void> dataDistributionTracker(
 	Reference<InitialDataDistribution> const& initData,
 	Database const& cx,
 	PromiseStream<RelocateShard> const& output,
+	Reference<ShardsAffectedByTeamFailure> const& shardsAffectedByTeamFailure,
 	PromiseStream<GetMetricsRequest> const& getShardMetrics,
 	FutureStream<Promise<int64_t>> const& getAverageShardBytes,
 	Promise<Void> const& readyToStart,
 	Reference<AsyncVar<bool>> const& zeroHealthyTeams,
-	UID const& masterId);
+	UID const& distributorId);
 
 Future<Void> dataDistributionQueue(
 	Database const& cx,
-	PromiseStream<RelocateShard> const& input,
+	PromiseStream<RelocateShard> const& output,
+	FutureStream<RelocateShard> const& input,
 	PromiseStream<GetMetricsRequest> const& getShardMetrics,
+	Reference<AsyncVar<bool>> const& processingUnhealthy,
 	vector<TeamCollectionInterface> const& teamCollection,
 	Reference<ShardsAffectedByTeamFailure> const& shardsAffectedByTeamFailure,
 	MoveKeysLock const& lock,
 	PromiseStream<Promise<int64_t>> const& getAverageShardBytes,
-	MasterInterface const& mi,
+	UID const& distributorId,
 	int const& teamSize,
-	int const& durableStorageQuorum,
-	double* const& lastLimited );
+	double* const& lastLimited);
 
 //Holds the permitted size and IO Bounds for a shard
 struct ShardSizeBounds {
@@ -243,3 +242,7 @@ ShardSizeBounds getShardSizeBounds(KeyRangeRef shard, int64_t maxShardSize);
 
 //Determines the maximum shard size based on the size of the database
 int64_t getMaxShardSize( double dbSizeEstimate );
+
+class DDTeamCollection;
+Future<Void> teamRemover(DDTeamCollection* const& self);
+Future<Void> teamRemoverPeriodic(DDTeamCollection* const& self);

@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-#include "Locality.h"
+#include "fdbrpc/Locality.h"
 
 const UID LocalityData::UNSET_ID = UID(0x0ccb4e0feddb5583, 0x010f6b77d9d10ece);
 const StringRef LocalityData::keyProcessId = LiteralStringRef("processid");
@@ -39,6 +39,8 @@ ProcessClass::Fitness ProcessClass::machineClassFitness( ClusterRole role ) cons
 			return ProcessClass::WorstFit;
 		case ProcessClass::LogClass:
 			return ProcessClass::WorstFit;
+		case ProcessClass::CoordinatorClass:
+			return ProcessClass::NeverAssign;
 		case ProcessClass::TesterClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -54,6 +56,8 @@ ProcessClass::Fitness ProcessClass::machineClassFitness( ClusterRole role ) cons
 			return ProcessClass::UnsetFit;
 		case ProcessClass::StorageClass:
 			return ProcessClass::WorstFit;
+		case ProcessClass::CoordinatorClass:
+			return ProcessClass::NeverAssign;
 		case ProcessClass::TesterClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -66,11 +70,13 @@ ProcessClass::Fitness ProcessClass::machineClassFitness( ClusterRole role ) cons
 		case ProcessClass::StatelessClass:
 			return ProcessClass::GoodFit;
 		case ProcessClass::ResolutionClass:
-			return ProcessClass::BestOtherFit;
+			return ProcessClass::OkayFit;
 		case ProcessClass::TransactionClass:
-			return ProcessClass::BestOtherFit;
+			return ProcessClass::OkayFit;
 		case ProcessClass::UnsetClass:
 			return ProcessClass::UnsetFit;
+		case ProcessClass::CoordinatorClass:
+			return ProcessClass::NeverAssign;
 		case ProcessClass::TesterClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -83,11 +89,13 @@ ProcessClass::Fitness ProcessClass::machineClassFitness( ClusterRole role ) cons
 		case ProcessClass::StatelessClass:
 			return ProcessClass::GoodFit;
 		case ProcessClass::ResolutionClass:
-			return ProcessClass::BestOtherFit;
+			return ProcessClass::OkayFit;
 		case ProcessClass::TransactionClass:
-			return ProcessClass::BestOtherFit;
+			return ProcessClass::OkayFit;
 		case ProcessClass::UnsetClass:
 			return ProcessClass::UnsetFit;
+		case ProcessClass::CoordinatorClass:
+			return ProcessClass::NeverAssign;
 		case ProcessClass::TesterClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -100,9 +108,11 @@ ProcessClass::Fitness ProcessClass::machineClassFitness( ClusterRole role ) cons
 		case ProcessClass::StatelessClass:
 			return ProcessClass::GoodFit;
 		case ProcessClass::TransactionClass:
-			return ProcessClass::BestOtherFit;
+			return ProcessClass::OkayFit;
 		case ProcessClass::UnsetClass:
 			return ProcessClass::UnsetFit;
+		case ProcessClass::CoordinatorClass:
+			return ProcessClass::NeverAssign;
 		case ProcessClass::TesterClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -115,11 +125,13 @@ ProcessClass::Fitness ProcessClass::machineClassFitness( ClusterRole role ) cons
 		case ProcessClass::StatelessClass:
 			return ProcessClass::GoodFit;
 		case ProcessClass::ResolutionClass:
-			return ProcessClass::BestOtherFit;
+			return ProcessClass::OkayFit;
 		case ProcessClass::TransactionClass:
-			return ProcessClass::BestOtherFit;
+			return ProcessClass::OkayFit;
 		case ProcessClass::UnsetClass:
 			return ProcessClass::UnsetFit;
+		case ProcessClass::CoordinatorClass:
+			return ProcessClass::NeverAssign;
 		case ProcessClass::TesterClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -128,21 +140,50 @@ ProcessClass::Fitness ProcessClass::machineClassFitness( ClusterRole role ) cons
 	case ProcessClass::ClusterController:
 		switch( _class ) {
 		case ProcessClass::ClusterControllerClass:
-			return ProcessClass::BestFit;	
+			return ProcessClass::BestFit;
 		case ProcessClass::StatelessClass:
 			return ProcessClass::GoodFit;
 		case ProcessClass::MasterClass:
-			return ProcessClass::BestOtherFit;
+			return ProcessClass::OkayFit;
 		case ProcessClass::ResolutionClass:
-			return ProcessClass::BestOtherFit;
+			return ProcessClass::OkayFit;
+		case ProcessClass::TransactionClass:
+			return ProcessClass::OkayFit;
 		case ProcessClass::ProxyClass:
-			return ProcessClass::BestOtherFit;
+			return ProcessClass::OkayFit;
+		case ProcessClass::LogRouterClass:
+			return ProcessClass::OkayFit;
 		case ProcessClass::UnsetClass:
 			return ProcessClass::UnsetFit;
+		case ProcessClass::CoordinatorClass:
+			return ProcessClass::NeverAssign;
 		case ProcessClass::TesterClass:
 			return ProcessClass::NeverAssign;
 		default:
 			return ProcessClass::WorstFit;
+		}
+	case ProcessClass::DataDistributor:
+		switch( _class ) {
+			case ProcessClass::DataDistributorClass:
+				return ProcessClass::BestFit;
+			case ProcessClass::StatelessClass:
+				return ProcessClass::GoodFit;
+			case ProcessClass::MasterClass:
+				return ProcessClass::OkayFit;
+			case ProcessClass::ResolutionClass:
+				return ProcessClass::OkayFit;
+			case ProcessClass::TransactionClass:
+				return ProcessClass::OkayFit;
+			case ProcessClass::ProxyClass:
+				return ProcessClass::OkayFit;
+			case ProcessClass::UnsetClass:
+				return ProcessClass::UnsetFit;
+			case ProcessClass::CoordinatorClass:
+				return ProcessClass::NeverAssign;
+			case ProcessClass::TesterClass:
+				return ProcessClass::NeverAssign;
+			default:
+				return ProcessClass::WorstFit;
 		}
 	default:
 		return ProcessClass::NeverAssign;

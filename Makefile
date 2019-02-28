@@ -15,9 +15,12 @@ ifeq ($(MONO),)
   MONO := /usr/bin/mono
 endif
 
-MCS := $(shell which dmcs)
+MCS := $(shell which mcs)
 ifeq ($(MCS),)
-  MCS := /usr/bin/dmcs
+  MCS := $(shell which dmcs) 
+endif
+ifeq ($(MCS),)
+  MCS := /usr/bin/mcs
 endif
 
 CFLAGS := -Werror -Wno-error=format -fPIC -DNO_INTELLISENSE -fvisibility=hidden -DNDEBUG=1 -Wreturn-type -fno-omit-frame-pointer
@@ -37,6 +40,7 @@ ifeq ($(PLATFORM),Linux)
   CXXFLAGS += -std=c++0x
 
   BOOSTDIR ?= /opt/boost_1_52_0
+  TLS_LIBDIR ?= /usr/local/lib
   DLEXT := so
   java_DLEXT := so
   TARGET_LIBC_VERSION ?= 2.11
@@ -52,6 +56,7 @@ else ifeq ($(PLATFORM),Darwin)
   .LIBPATTERNS := lib%.dylib lib%.a
 
   BOOSTDIR ?= $(HOME)/boost_1_52_0
+  TLS_LIBDIR ?= /usr/local/lib
   DLEXT := dylib
   java_DLEXT := jnilib
 else
@@ -83,6 +88,16 @@ CFLAGS += -g
 
 # valgrind-compatibile builds are enabled by uncommenting lines in valgind.mk
 
+# Define the TLS compilation and link variables
+ifdef TLS_DISABLED
+CFLAGS += -DTLS_DISABLED
+FDB_TLS_LIB :=
+TLS_LIBS :=
+else
+FDB_TLS_LIB := lib/libFDBLibTLS.a
+TLS_LIBS += $(addprefix $(TLS_LIBDIR)/,libtls.a libssl.a libcrypto.a)
+endif
+
 CXXFLAGS += -Wno-deprecated
 LDFLAGS :=
 LIBS :=
@@ -92,7 +107,10 @@ STATIC_LIBS :=
 VPATH += $(addprefix :,$(filter-out lib,$(patsubst -L%,%,$(filter -L%,$(LDFLAGS)))))
 
 CS_PROJECTS := flow/actorcompiler flow/coveragetool fdbclient/vexillographer
-CPP_PROJECTS := flow fdbrpc fdbclient fdbbackup fdbserver fdbcli bindings/c bindings/java fdbmonitor bindings/flow/tester bindings/flow FDBLibTLS
+CPP_PROJECTS := flow fdbrpc fdbclient fdbbackup fdbserver fdbcli bindings/c bindings/java fdbmonitor bindings/flow/tester bindings/flow
+ifndef TLS_DISABLED
+CPP_PROJECTS += FDBLibTLS
+endif
 OTHER_PROJECTS := bindings/python bindings/ruby bindings/go
 
 CS_MK_GENERATED := $(CS_PROJECTS:=/generated.mk)
@@ -127,7 +145,7 @@ else
 endif
 	@echo "#define FDB_VT_PACKAGE_NAME \"$(PACKAGE_NAME)\"" >> $@
 
-bindings: fdb_c fdb_python fdb_ruby fdb_java fdb_flow fdb_flow_tester fdb_go fdb_go_tester
+bindings: fdb_c fdb_python fdb_ruby fdb_java fdb_flow fdb_flow_tester fdb_go fdb_go_tester fdb_c_tests
 
 Makefiles: $(MK_GENERATED)
 
@@ -141,6 +159,11 @@ $(CPP_MK_GENERATED): build/vcxprojtom4.py build/vcxproj.mk Makefile
 
 DEPSDIR := .deps
 OBJDIR := .objs
+CMDDIR := .cmds
+
+COMPILE_COMMANDS_JSONS := $(addprefix $(CMDDIR)/,$(addsuffix /compile_commands.json,${CPP_PROJECTS}))
+compile_commands.json: build/concatinate_jsons.py ${COMPILE_COMMANDS_JSONS}
+	@build/concatinate_jsons.py ${COMPILE_COMMANDS_JSONS}
 
 include $(MK_INCLUDE)
 
@@ -150,6 +173,8 @@ clean: $(CLEAN_TARGETS) docpreview_clean
 	@rm -rf $(DEPSDIR)
 	@rm -rf lib/
 	@rm -rf bin/coverage.*.xml
+	@rm -rf $(CMDDIR) compile_commands.json
+	@find . -name "*.g.cpp" -exec rm -f {} \; -or -name "*.g.h" -exec rm -f {} \;
 
 targets:
 	@echo "Available targets:"
@@ -175,13 +200,16 @@ lib/libstdc++.a: $(shell $(CC) -print-file-name=libstdc++_pic.a)
 	@rm -r .libstdc++
 
 docpreview: javadoc
-	TARGETS= $(MAKE) -C documentation docpreview
+	@echo "Generating     docpreview"
+	@TARGETS= $(MAKE) -C documentation docpreview
 
 docpreview_clean:
-	CLEAN_TARGETS= $(MAKE) -C documentation docpreview_clean
+	@echo "Cleaning       docpreview"
+	@CLEAN_TARGETS= $(MAKE) -C documentation -s --no-print-directory docpreview_clean
 
 packages/foundationdb-docs-$(VERSION).tar.gz: FORCE javadoc
-	TARGETS= $(MAKE) -C documentation docpackage
+	@echo "Packaging      documentation"
+	@TARGETS= $(MAKE) -C documentation docpackage
 	@mkdir -p packages
 	@rm -f packages/foundationdb-docs-$(VERSION).tar.gz
 	@cp documentation/sphinx/.dist/foundationdb-docs-$(VERSION).tar.gz packages/foundationdb-docs-$(VERSION).tar.gz

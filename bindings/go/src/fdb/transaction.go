@@ -23,7 +23,7 @@
 package fdb
 
 /*
- #define FDB_API_VERSION 520
+ #define FDB_API_VERSION 610
  #include <foundationdb/fdb_c.h>
 */
 import "C"
@@ -352,9 +352,8 @@ func (t Transaction) Reset() {
 func boolToInt(b bool) int {
 	if b {
 		return 1
-	} else {
-		return 0
 	}
+	return 0
 }
 
 func (t *transaction) getKey(sel KeySelector, snapshot int) FutureKey {

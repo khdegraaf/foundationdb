@@ -18,8 +18,8 @@
  * limitations under the License.
  */
 
-#include "SystemData.h"
-#include "StorageServerInterface.h"
+#include "fdbclient/SystemData.h"
+#include "fdbclient/StorageServerInterface.h"
 #include "flow/TDMetric.actor.h"
 
 const KeyRef systemKeysPrefix = LiteralStringRef("\xff");
@@ -107,10 +107,6 @@ const KeyRangeRef serverTagKeys(
 	LiteralStringRef("\xff/serverTag/"),
 	LiteralStringRef("\xff/serverTag0") );
 const KeyRef serverTagPrefix = serverTagKeys.begin;
-const KeyRef serverTagMaxOldKey = LiteralStringRef("\xff/serverTagMax");
-const KeyRangeRef serverTagMaxKeys(
-	LiteralStringRef("\xff/serverTagMax/"),
-	LiteralStringRef("\xff/serverTagMax0") );
 const KeyRangeRef serverTagConflictKeys(
 	LiteralStringRef("\xff/serverTagConflict/"),
 	LiteralStringRef("\xff/serverTagConflict0") );
@@ -119,13 +115,6 @@ const KeyRangeRef serverTagHistoryKeys(
 	LiteralStringRef("\xff/serverTagHistory/"),
 	LiteralStringRef("\xff/serverTagHistory0") );
 const KeyRef serverTagHistoryPrefix = serverTagHistoryKeys.begin;
-
-const Key serverMaxTagKeyFor( int8_t tagLocality ) {
-	BinaryWriter wr(Unversioned());
-	wr.serializeBytes( serverTagMaxKeys.begin );
-	wr << tagLocality;
-	return wr.toStringRef();
-}
 
 const Key serverTagKeyFor( UID serverID ) {
 	BinaryWriter wr(Unversioned());
@@ -209,36 +198,6 @@ const Key serverTagConflictKeyFor( Tag tag ) {
 	return wr.toStringRef();
 }
 
-const Value serverTagMaxValue( Tag tag ) {
-	BinaryWriter wr(Unversioned()); //This has to be unversioned because we are using an atomic op to max it
-	wr << tag;
-	return wr.toStringRef();
-}
-
-Tag decodeServerTagMaxValue( ValueRef const& value ) {
-	Tag s;
-	BinaryReader reader( value, Unversioned() );
-	reader >> s;
-	return s;
-}
-
-Tag decodeServerTagMaxValueOld( ValueRef const& value ) {
-	Tag s;
-	BinaryReader reader( value, Unversioned() );
-	int16_t id;
-	reader >> id;
-	if(id == invalidTagOld) {
-		s = invalidTag;
-	} else if(id == txsTagOld) {
-		s = txsTag;
-	} else {
-		ASSERT(id >= 0);
-		s.id = id;
-		s.locality = tagLocalityUpgraded;
-	}
-	return s;
-}
-
 const KeyRangeRef tagLocalityListKeys(
 	LiteralStringRef("\xff/tagLocalityList/"),
 	LiteralStringRef("\xff/tagLocalityList0") );
@@ -268,6 +227,61 @@ int8_t decodeTagLocalityListValue( ValueRef const& value ) {
 	reader >> s;
 	return s;
 }
+
+const KeyRangeRef datacenterReplicasKeys(
+	LiteralStringRef("\xff\x02/datacenterReplicas/"),
+	LiteralStringRef("\xff\x02/datacenterReplicas0") );
+const KeyRef datacenterReplicasPrefix = datacenterReplicasKeys.begin;
+
+const Key datacenterReplicasKeyFor( Optional<Value> dcID ) {
+	BinaryWriter wr(AssumeVersion(currentProtocolVersion));
+	wr.serializeBytes( datacenterReplicasKeys.begin );
+	wr << dcID;
+	return wr.toStringRef();
+}
+
+const Value datacenterReplicasValue( int const& replicas ) {
+	BinaryWriter wr(IncludeVersion());
+	wr << replicas;
+	return wr.toStringRef();
+}
+Optional<Value> decodeDatacenterReplicasKey( KeyRef const& key ) {
+	Optional<Value> dcID;
+	BinaryReader rd( key.removePrefix(datacenterReplicasKeys.begin), AssumeVersion(currentProtocolVersion) );
+	rd >> dcID;
+	return dcID;
+}
+int decodeDatacenterReplicasValue( ValueRef const& value ) {
+	int s;
+	BinaryReader reader( value, IncludeVersion() );
+	reader >> s;
+	return s;
+}
+
+//    "\xff\x02/tLogDatacenters/[[datacenterID]]"
+extern const KeyRangeRef tLogDatacentersKeys;
+extern const KeyRef tLogDatacentersPrefix;
+const Key tLogDatacentersKeyFor( Optional<Value> dcID );
+
+const KeyRangeRef tLogDatacentersKeys(
+	LiteralStringRef("\xff\x02/tLogDatacenters/"),
+	LiteralStringRef("\xff\x02/tLogDatacenters0") );
+const KeyRef tLogDatacentersPrefix = tLogDatacentersKeys.begin;
+
+const Key tLogDatacentersKeyFor( Optional<Value> dcID ) {
+	BinaryWriter wr(AssumeVersion(currentProtocolVersion));
+	wr.serializeBytes( tLogDatacentersKeys.begin );
+	wr << dcID;
+	return wr.toStringRef();
+}
+Optional<Value> decodeTLogDatacentersKey( KeyRef const& key ) {
+	Optional<Value> dcID;
+	BinaryReader rd( key.removePrefix(tLogDatacentersKeys.begin), AssumeVersion(currentProtocolVersion) );
+	rd >> dcID;
+	return dcID;
+}
+
+const KeyRef primaryDatacenterKey = LiteralStringRef("\xff/primaryDatacenter");
 
 // serverListKeys.contains(k) iff k.startsWith( serverListKeys.begin ) because '/'+1 == '0'
 const KeyRangeRef serverListKeys(
@@ -404,6 +418,12 @@ const KeyRef minRequiredCommitVersionKey = LiteralStringRef("\xff/minRequiredCom
 const KeyRef globalKeysPrefix = LiteralStringRef("\xff/globals");
 const KeyRef lastEpochEndKey = LiteralStringRef("\xff/globals/lastEpochEnd");
 const KeyRef lastEpochEndPrivateKey = LiteralStringRef("\xff\xff/globals/lastEpochEnd");
+const KeyRef killStorageKey = LiteralStringRef("\xff/globals/killStorage");
+const KeyRef killStoragePrivateKey = LiteralStringRef("\xff\xff/globals/killStorage");
+const KeyRef rebootWhenDurableKey = LiteralStringRef("\xff/globals/rebootWhenDurable");
+const KeyRef rebootWhenDurablePrivateKey = LiteralStringRef("\xff\xff/globals/rebootWhenDurable");
+const KeyRef primaryLocalityKey = LiteralStringRef("\xff/globals/primaryLocality");
+const KeyRef primaryLocalityPrivateKey = LiteralStringRef("\xff\xff/globals/primaryLocality");
 const KeyRef fastLoggingEnabled = LiteralStringRef("\xff/globals/fastLoggingEnabled");
 const KeyRef fastLoggingEnabledPrivateKey = LiteralStringRef("\xff\xff/globals/fastLoggingEnabled");
 
@@ -417,6 +437,9 @@ const UID dataDistributionModeLock = UID(6345,3425);
 const KeyRangeRef fdbClientInfoPrefixRange(LiteralStringRef("\xff\x02/fdbClientInfo/"), LiteralStringRef("\xff\x02/fdbClientInfo0"));
 const KeyRef fdbClientInfoTxnSampleRate = LiteralStringRef("\xff\x02/fdbClientInfo/client_txn_sample_rate/");
 const KeyRef fdbClientInfoTxnSizeLimit = LiteralStringRef("\xff\x02/fdbClientInfo/client_txn_size_limit/");
+
+// Request latency measurement key
+const KeyRef latencyBandConfigKey = LiteralStringRef("\xff\x02/latencyBandConfig");
 
 // Keyspace to maintain wall clock to version map
 const KeyRangeRef timeKeeperPrefixRange(LiteralStringRef("\xff\x02/timeKeeper/map/"), LiteralStringRef("\xff\x02/timeKeeper/map0"));
@@ -464,7 +487,7 @@ Key logRangesEncodeKey(KeyRef keyBegin, UID logUid) {
 // Returns the start key and optionally the logRange Uid
 KeyRef logRangesDecodeKey(KeyRef key, UID* logUid) {
 	if (key.size() < logRangesRange.begin.size() + sizeof(UID)) {
-		TraceEvent(SevError, "InvalidDecodeKey").detail("key", printable(key));
+		TraceEvent(SevError, "InvalidDecodeKey").detail("Key", printable(key));
 		ASSERT(false);
 	}
 
@@ -567,3 +590,22 @@ std::pair<MetricNameRef, KeyRef> decodeMetricConfKey( KeyRef const& prefix, KeyR
 const KeyRef maxUIDKey = LiteralStringRef("\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff");
 
 const KeyRef databaseLockedKey = LiteralStringRef("\xff/dbLocked");
+const KeyRef mustContainSystemMutationsKey = LiteralStringRef("\xff/mustContainSystemMutations");
+
+const KeyRangeRef monitorConfKeys(
+	LiteralStringRef("\xff\x02/monitorConf/"),
+	LiteralStringRef("\xff\x02/monitorConf0")
+);
+
+const KeyRef restoreLeaderKey = LiteralStringRef("\xff\x02/restoreLeader");
+const KeyRangeRef restoreWorkersKeys(
+	LiteralStringRef("\xff\x02/restoreWorkers/"),
+	LiteralStringRef("\xff\x02/restoreWorkers0")
+);
+
+const Key restoreWorkerKeyFor( UID const& agentID ) {
+	BinaryWriter wr(Unversioned());
+	wr.serializeBytes( restoreWorkersKeys.begin );
+	wr << agentID;
+	return wr.toStringRef();
+}

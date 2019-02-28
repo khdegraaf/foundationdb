@@ -24,6 +24,7 @@ import ctypes
 import uuid
 import struct
 import math
+import sys
 from bisect import bisect_left
 
 from fdb import six
@@ -306,6 +307,16 @@ def _reduce_children(child_values):
     return bytes_list, version_pos
 
 
+if sys.version_info < (2, 7):
+    def _bit_length(x):
+        s = bin(x)       # binary representation:  bin(-37) --> '-0b100101'
+        s = s.lstrip('-0b') # remove leading zeros and minus sign
+        return len(s)
+else:
+    def _bit_length(x):
+        return x.bit_length()
+
+
 def _encode(value, nested=False):
     # returns [code][data] (code != 0xFF)
     # encoded values are self-terminating
@@ -324,7 +335,7 @@ def _encode(value, nested=False):
             return b''.join([six.int2byte(INT_ZERO_CODE)]), -1
         elif value > 0:
             if value >= _size_limits[-1]:
-                length = (value.bit_length() + 7) // 8
+                length = (_bit_length(value) + 7) // 8
                 data = [six.int2byte(POS_INT_END), six.int2byte(length)]
                 for i in _range(length - 1, -1, -1):
                     data.append(six.int2byte((value >> (8 * i)) & 0xff))
@@ -334,7 +345,7 @@ def _encode(value, nested=False):
             return six.int2byte(INT_ZERO_CODE + n) + struct.pack(">Q", value)[-n:], -1
         else:
             if -value >= _size_limits[-1]:
-                length = (value.bit_length() + 7) // 8
+                length = (_bit_length(value) + 7) // 8
                 value += (1 << (length * 8)) - 1
                 data = [six.int2byte(NEG_INT_START), six.int2byte(length ^ 0xff)]
                 for i in _range(length - 1, -1, -1):
@@ -363,7 +374,7 @@ def _encode(value, nested=False):
     elif isinstance(value, tuple) or isinstance(value, list):
         child_bytes, version_pos = _reduce_children(map(lambda x: _encode(x, True), value))
         new_version_pos = -1 if version_pos < 0 else version_pos + 1
-        return b''.join([six.int2byte(NESTED_CODE)] + child_bytes + [six.int2byte(0x00)]), version_pos
+        return b''.join([six.int2byte(NESTED_CODE)] + child_bytes + [six.int2byte(0x00)]), new_version_pos
     else:
         raise ValueError("Unsupported data type: " + str(type(value)))
 
@@ -384,7 +395,10 @@ def _pack_maybe_with_versionstamp(t, prefix=None):
     if version_pos >= 0:
         version_pos += len(prefix) if prefix is not None else 0
         bytes_list.extend(child_bytes)
-        bytes_list.append(struct.pack('<H', version_pos))
+        if fdb.is_api_version_selected() and fdb.get_api_version() < 520:
+            bytes_list.append(struct.pack('<H', version_pos))
+        else:
+            bytes_list.append(struct.pack('<L', version_pos))
     else:
         bytes_list.extend(child_bytes)
 

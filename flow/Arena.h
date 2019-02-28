@@ -22,10 +22,10 @@
 #define FLOW_ARENA_H
 #pragma once
 
-#include "FastAlloc.h"
-#include "FastRef.h"
-#include "Error.h"
-#include "Trace.h"
+#include "flow/FastAlloc.h"
+#include "flow/FastRef.h"
+#include "flow/Error.h"
+#include "flow/Trace.h"
 #include <algorithm>
 #include <stdint.h>
 #include <string>
@@ -375,7 +375,7 @@ public:
 		//T tmp;
 		//ar >> tmp;
 		//*this = tmp;
-		ar & (*(T*)this) & arena();
+		serializer(ar, (*(T*)this), arena());
 	}
 
 	/*static Standalone<T> fakeStandalone( const T& t ) {
@@ -429,9 +429,22 @@ public:
 		return StringRef(s,prefix.size() + size());
 	}
 
+	StringRef withSuffix( const StringRef& suffix, Arena& arena ) const {
+		uint8_t* s = new (arena) uint8_t[ suffix.size() + size() ];
+		memcpy(s, begin(), size());
+		memcpy(s+size(), suffix.begin(), suffix.size());
+		return StringRef(s,suffix.size() + size());
+	}
+
 	Standalone<StringRef> withPrefix( const StringRef& prefix ) const {
 		Standalone<StringRef> r;
-		((StringRef &)r) = withPrefix(prefix, r.arena());
+		r.contents() = withPrefix(prefix, r.arena());
+		return r;
+	}
+
+	Standalone<StringRef> withSuffix( const StringRef& suffix ) const {
+		Standalone<StringRef> r;
+		r.contents() = withSuffix(suffix, r.arena());
 		return r;
 	}
 
@@ -439,6 +452,12 @@ public:
 		// pre: startsWith(s)
 		UNSTOPPABLE_ASSERT( s.size() <= size() );  //< In debug mode, we could check startsWith()
 		return substr( s.size() );
+	}
+
+	StringRef removeSuffix( const StringRef& s ) const {
+		// pre: endsWith(s)
+		UNSTOPPABLE_ASSERT( s.size() <= size() );  //< In debug mode, we could check endsWith()
+		return substr( 0, size() - s.size() );
 	}
 
 	std::string toString() const { return std::string( (const char*)data, length ); }
@@ -450,6 +469,32 @@ public:
 			else if (b == '\\') s += "\\\\";
 			else s += format("\\x%02x", b);
 		}
+		return s;
+	}
+
+	std::string toHexString(int limit = -1) const {
+		if(limit < 0)
+			limit = length;
+		if(length > limit) {
+			// If limit is high enough split it so that 2/3 of limit is used to show prefix bytes and the rest is used for suffix bytes
+			if(limit >= 9) {
+				int suffix = limit / 3;
+				return substr(0, limit - suffix).toHexString() + "..." + substr(length - suffix, suffix).toHexString() + format(" [%d bytes]", length);
+			}
+			return substr(0, limit).toHexString() + format("...[%d]", length);
+		}
+
+		std::string s;
+		s.reserve(length * 7);
+		for (int i = 0; i<length; i++) {
+			uint8_t b = (*this)[i];
+			if(isalnum(b))
+				s.append(format("%02x (%c) ", b, b));
+			else
+				s.append(format("%02x ", b));
+		}
+		if(s.size() > 0)
+			s.resize(s.size() - 1);
 		return s;
 	}
 
@@ -498,6 +543,14 @@ private:
 inline static Standalone<StringRef> makeString( int length ) {
 	Standalone<StringRef> returnString;
 	uint8_t *outData = new (returnString.arena()) uint8_t[length];
+	((StringRef&)returnString) = StringRef(outData, length);
+	return returnString;
+}
+
+inline static Standalone<StringRef> makeAlignedString( int alignment, int length ) {
+	Standalone<StringRef> returnString;
+	uint8_t *outData = new (returnString.arena()) uint8_t[alignment + length];
+	outData = (uint8_t*)((((uintptr_t)outData + (alignment - 1)) / alignment) * alignment);
 	((StringRef&)returnString) = StringRef(outData, length);
 	return returnString;
 }
@@ -576,6 +629,7 @@ public:
 	}
 
 	VectorRef( T* data, int size ) : data(data), m_size(size), m_capacity(size) {}
+	VectorRef( T* data, int size, int capacity ) : data(data), m_size(size), m_capacity(capacity) {}
 	//VectorRef( const VectorRef<T>& toCopy ) : data( toCopy.data ), m_size( toCopy.m_size ), m_capacity( toCopy.m_capacity ) {}
 	//VectorRef<T>& operator=( const VectorRef<T>& );
 
@@ -669,6 +723,10 @@ public:
 
 	int capacity() const {
 		return m_capacity;
+	}
+
+	void extendUnsafeNoReallocNoInit(int amount) {
+		m_size += amount;
 	}
 
 private:
