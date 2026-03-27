@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ public class BlockingBenchmark {
 	private static final int PARALLEL = 100;
 
 	public static void main(String[] args) throws InterruptedException {
-		FDB fdb = FDB.selectAPIVersion(610);
+		FDB fdb = FDB.selectAPIVersion(TestApiVersion.CURRENT);
 
 		// The cluster file DOES NOT need to be valid, although it must exist.
 		//  This is because the database is never really contacted in this test.

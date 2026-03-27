@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,10 +18,9 @@
  * limitations under the License.
  */
 
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Text.RegularExpressions;
 
 namespace actorcompiler
@@ -38,14 +37,17 @@ namespace actorcompiler
 
     class ErrorMessagePolicy
     {
-        public bool DisableActorWithoutWaitWarning = false;
+        public bool DisableDiagnostics = false;
         public void HandleActorWithoutWait(String sourceFile, Actor actor)
         {
-            if (!DisableActorWithoutWaitWarning && !actor.isTestCase)
+            if (!DisableDiagnostics && !actor.isTestCase)
             {
                 // TODO(atn34): Once cmake is the only build system we can make this an error instead of a warning.
                 Console.Error.WriteLine("{0}:{1}: warning: ACTOR {2} does not contain a wait() statement", sourceFile, actor.SourceLine, actor.name);
             }
+        }
+        public bool ActorsNoDiscardByDefault() {
+            return !DisableDiagnostics;
         }
     }
 
@@ -79,6 +81,14 @@ namespace actorcompiler
                                     new TokenRange(range.GetAllTokens(), Position, range.End))
                                 .Skip(1)  // skip the "<", which is considered "outside"
                                 .First()  // get the ">", which is likewise "outside"
+                                .Position);
+                case "[": return
+                    new TokenRange(range.GetAllTokens(),
+                        Position+1,
+                        BracketParser.NotInsideBrackets(
+                                    new TokenRange(range.GetAllTokens(), Position, range.End))
+                                .Skip(1)  // skip the "[", which is considered "outside"
+                                .First()  // get the "]", which is likewise "outside"
                                 .Position);
                 default: throw new NotSupportedException("Can't match this token!");
             }
@@ -190,6 +200,22 @@ namespace actorcompiler
         int endPos;
     };
 
+    static class BracketParser
+    {
+        public static IEnumerable<Token> NotInsideBrackets(IEnumerable<Token> tokens)
+        {
+            int BracketDepth = 0;
+            int? BasePD = null;
+            foreach (var tok in tokens)
+            {
+                if (BasePD == null) BasePD = tok.ParenDepth;
+                if (tok.ParenDepth == BasePD && tok.Value == "]") BracketDepth--;
+                if (BracketDepth == 0)
+                    yield return tok;
+                if (tok.ParenDepth == BasePD && tok.Value == "[") BracketDepth++;
+            }
+        }
+    };
     static class AngleBracketParser
     {
         public static IEnumerable<Token> NotInsideAngleBrackets(IEnumerable<Token> tokens)
@@ -214,16 +240,85 @@ namespace actorcompiler
         Token[] tokens;
         string sourceFile;
         ErrorMessagePolicy errorMessagePolicy;
+        public bool generateProbes;
+        public Dictionary<(ulong, ulong), string> uidObjects { get; private set; }
 
-        public ActorParser(string text, string sourceFile, ErrorMessagePolicy errorMessagePolicy)
+        public ActorParser(string text, string sourceFile, ErrorMessagePolicy errorMessagePolicy, bool generateProbes)
         {
             this.sourceFile = sourceFile;
             this.errorMessagePolicy = errorMessagePolicy;
+            this.generateProbes = generateProbes;
+            this.uidObjects = new Dictionary<(ulong, ulong), string>();
             tokens = Tokenize(text).Select(t=>new Token{ Value=t }).ToArray();
             CountParens();
             //if (sourceFile.EndsWith(".h")) LineNumbersEnabled = false;
             //Console.WriteLine("{0} chars -> {1} tokens", text.Length, tokens.Length);
             //showTokens();
+        }
+
+        class ClassContext {
+            public string name;
+            public int inBlocks;
+        }
+
+        private bool ParseClassContext(TokenRange toks, out string name)
+        {
+            name = "";
+            if (toks.Begin == toks.End)
+            {
+                return false;
+            }
+
+            // http://nongnu.org/hcb/#attribute-specifier-seq
+            Token first;
+            while (true)
+            {
+                first = toks.First(NonWhitespace);
+                if (first.Value == "[")
+                {
+                    var contents = first.GetMatchingRangeIn(toks);
+                    toks = range(contents.End + 1, toks.End);
+                }
+                else if (first.Value == "alignas")
+                {
+                    toks = range(first.Position + 1, toks.End);
+                    first = toks.First(NonWhitespace);
+                    first.Assert("Expected ( after alignas", t => t.Value == "(");
+                    var contents = first.GetMatchingRangeIn(toks);
+                    toks = range(contents.End + 1, toks.End);
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            // http://nongnu.org/hcb/#class-head-name
+            first = toks.First(NonWhitespace);
+            if (!identifierPattern.Match(first.Value).Success) {
+                return false;
+            }
+            while (true) {
+                first.Assert("Expected identifier", t=>identifierPattern.Match(t.Value).Success);
+                name += first.Value;
+                toks = range(first.Position + 1, toks.End);
+                if (toks.First(NonWhitespace).Value == "::") {
+                    name += "::";
+                    toks = toks.SkipWhile(Whitespace).Skip(1);
+                } else {
+                    break;
+                }
+                first = toks.First(NonWhitespace);
+            }
+            // http://nongnu.org/hcb/#class-virt-specifier-seq
+            toks = toks.SkipWhile(t => Whitespace(t) || t.Value == "final" || t.Value == "explicit");
+
+            first = toks.First(NonWhitespace);
+            if (first.Value == ":" || first.Value == "{") {
+                // At this point we've confirmed that this is a class.
+                return true;
+            }
+            return false;
         }
 
         public void Write(System.IO.TextWriter writer, string destFileName)
@@ -237,19 +332,26 @@ namespace actorcompiler
                 outLine++;
             }
             int inBlocks = 0;
+            Stack<ClassContext> classContextStack = new Stack<ClassContext>();
             for(int i=0; i<tokens.Length; i++)
             {
                 if(tokens[0].SourceLine == 0)
                 {
                     throw new Exception("Internal error: Invalid source line (0)");
                 }
-                if (tokens[i].Value == "ACTOR" || tokens[i].Value == "TEST_CASE")
+                if (tokens[i].Value == "ACTOR" || tokens[i].Value == "SWIFT_ACTOR" || tokens[i].Value == "TEST_CASE")
                 {
-                    int end;
-                    var actor = ParseActor(i, out end);
+                    var actor = ParseActor(i, out int end);
+                    if (classContextStack.Count > 0)
+                    {
+                        actor.enclosingClass = String.Join("::", classContextStack.Reverse().Select(t => t.name));
+                    }
                     var actorWriter = new System.IO.StringWriter();
                     actorWriter.NewLine = "\n";
-                    new ActorCompiler(actor, sourceFile, inBlocks==0, LineNumbersEnabled).Write(actorWriter);
+                    var actorCompiler = new ActorCompiler(actor, sourceFile, inBlocks == 0, LineNumbersEnabled, generateProbes);
+                    actorCompiler.Write(actorWriter);
+                    actorCompiler.uidObjects.ToList().ForEach(x => this.uidObjects.TryAdd(x.Key, x.Value));
+
                     string[] actorLines = actorWriter.ToString().Split('\n');
 
                     bool hasLineNumber = false;
@@ -293,10 +395,29 @@ namespace actorcompiler
                         outLine++;
                     }
                 }
+                else if (tokens[i].Value == "class" || tokens[i].Value == "struct" || tokens[i].Value == "union")
+                {
+                    writer.Write(tokens[i].Value);
+                    string name;
+                    if (ParseClassContext(range(i+1, tokens.Length), out name))
+                    {
+                        classContextStack.Push(new ClassContext { name = name, inBlocks = inBlocks});
+                    }
+                }
                 else
                 {
-                    if (tokens[i].Value == "{") inBlocks++;
-                    else if (tokens[i].Value == "}") inBlocks--;
+                    if (tokens[i].Value == "{")
+                    {
+                        inBlocks++;
+                    }
+                    else if (tokens[i].Value == "}")
+                    {
+                        inBlocks--;
+                        if (classContextStack.Count > 0 && classContextStack.Peek().inBlocks == inBlocks)
+                        {
+                            classContextStack.Pop();
+                        }
+                    }
                     writer.Write(tokens[i].Value);
                     outLine += tokens[i].Value.Count(c => c == '\n');
                 }
@@ -365,6 +486,12 @@ namespace actorcompiler
                     initializer = 
                         range(paren.Position + 1, tokens.End)
                             .TakeWhile(t => t.ParenDepth > paren.ParenDepth);
+                } else {
+                    Token brace = AngleBracketParser.NotInsideAngleBrackets(tokens).FirstOrDefault(t => t.Value == "{");
+                    if (brace != null) {
+                        // type name{initializer};
+                        throw new Error(brace.SourceLine, "Uniform initialization syntax is not currently supported for state variables (use '(' instead of '}}' ?)");
+                    }
                 }
             }
             name = beforeInitializer.Last(NonWhitespace);
@@ -417,7 +544,13 @@ namespace actorcompiler
             actor.testCaseParameters = str(paramRange);
 
             actor.name = "flowTestCase" + toks.First().SourceLine;
-            actor.parameters = new VarDeclaration[] { };
+            actor.parameters = new VarDeclaration[] { new VarDeclaration {
+                    name = "params",
+                    type = "UnitTestParameters",
+                    initializer = "",
+                    initializerConstructorSyntax = false
+                }
+            };
             actor.returnType = "Void";
         }
 
@@ -437,6 +570,21 @@ namespace actorcompiler
 
                 toks = range(templateParams.End + 1, toks.End);
             }
+            var attribute = toks.First(NonWhitespace);
+            while (attribute.Value == "[")
+            {
+                var attributeContents = attribute.GetMatchingRangeIn(toks);
+
+                var asArray = attributeContents.ToArray();
+                if (asArray.Length < 2 || asArray[0].Value != "[" || asArray[asArray.Length - 1].Value != "]")
+                {
+                    throw new Error(actor.SourceLine, "Invalid attribute: Expected [[...]]");
+                }
+                actor.attributes.Add("[" + str(NormalizeWhitespace(attributeContents)) + "]");
+                toks = range(attributeContents.End + 1, toks.End);
+
+                attribute = toks.First(NonWhitespace);
+            }
 
             var staticKeyword = toks.First(NonWhitespace);
             if (staticKeyword.Value == "static")
@@ -448,7 +596,7 @@ namespace actorcompiler
             var uncancellableKeyword = toks.First(NonWhitespace);
             if (uncancellableKeyword.Value == "UNCANCELLABLE")
             {
-                actor.isUncancellable = true;
+                actor.SetUncancellable();
                 toks = range(uncancellableKeyword.Position + 1, toks.End);
             }
 
@@ -494,6 +642,20 @@ namespace actorcompiler
                     throw new Error(actor.SourceLine, "Unrecognized tokens preceding parameter list in actor declaration");
                 }
             }
+            if (errorMessagePolicy.ActorsNoDiscardByDefault() && !actor.attributes.Contains("[[flow_allow_discard]]")) {
+                if (actor.IsCancellable())
+                {
+                    actor.attributes.Add("[[nodiscard]]");
+                }
+            }
+            HashSet<string> knownFlowAttributes = new HashSet<string>();
+            knownFlowAttributes.Add("[[flow_allow_discard]]");
+            foreach (var flowAttribute in actor.attributes.Where(a => a.StartsWith("[[flow_"))) {
+                if (!knownFlowAttributes.Contains(flowAttribute)) {
+                    throw new Error(actor.SourceLine, "Unknown flow attribute {0}", flowAttribute);
+                }
+            }
+            actor.attributes = actor.attributes.Where(a => !a.StartsWith("[[flow_")).ToList();
         }
 
         LoopStatement ParseLoopStatement(TokenRange toks)
@@ -677,12 +839,19 @@ namespace actorcompiler
 
         Statement ParseIfStatement(TokenRange toks)
         {
-            var expr = toks.Consume("if")
-                           .First(NonWhitespace)
+            toks = toks.Consume("if");
+            toks = toks.SkipWhile(Whitespace);
+            bool constexpr = toks.First().Value == "constexpr";
+            if(constexpr) {
+               toks = toks.Consume("constexpr").SkipWhile(Whitespace);
+            }
+
+            var expr = toks.First(NonWhitespace)
                            .Assert("Expected (", t => t.Value == "(")
                            .GetMatchingRangeIn(toks);
             return new IfStatement {
                 expression = str(NormalizeWhitespace(expr)),
+                constexpr = constexpr,
                 ifBody = ParseCompoundStatement(range(expr.End+1, toks.End))
                 // elseBody will be filled in later if necessary by ParseElseStatement
             };
@@ -776,6 +945,8 @@ namespace actorcompiler
                         Add(ParseStateDeclaration(toks));
                     else if (toks.First().Value == "switch" && toks.Any(t => t.Value == "return"))
                         throw new Error(toks.First().SourceLine, "Unsupported compound statement containing return.");
+                    else if (toks.First().Value.StartsWith("#"))
+                        throw new Error(toks.First().SourceLine, "Found \"{0}\". Preprocessor directives are not supported within ACTORs", toks.First().Value);
                     else if (toks.RevSkipWhile(t => t.Value == ";").Any(NonWhitespace))
                         Add(new PlainOldCodeStatement
                         {
@@ -877,7 +1048,7 @@ namespace actorcompiler
             actor.isForwardDeclaration = toSemicolon.Length < heading.Length;
             if (actor.isForwardDeclaration) {
                 heading = toSemicolon;
-                if (head_token.Value == "ACTOR") {
+                if (head_token.Value == "ACTOR" || head_token.Value == "SWIFT_ACTOR") {
                     ParseActorHeading(actor, heading);
                 } else {
                     head_token.Assert("ACTOR expected!", t => false);
@@ -887,7 +1058,7 @@ namespace actorcompiler
                 var body = range(heading.End+1, tokens.Length)
                     .TakeWhile(t => t.BraceDepth > toks.First().BraceDepth);
 
-                if (head_token.Value == "ACTOR")
+                if (head_token.Value == "ACTOR" || head_token.Value == "SWIFT_ACTOR")
                 {
                     ParseActorHeading(actor, heading);
                 }
@@ -960,11 +1131,15 @@ namespace actorcompiler
             }
         }
 
+        readonly Regex identifierPattern = new Regex(@"\G[a-zA-Z_][a-zA-Z_0-9]*", RegexOptions.Singleline);
+
         readonly Regex[] tokenExpressions = (new string[] {
             @"\{",
             @"\}",
             @"\(",
             @"\)",
+            @"\[",
+            @"\]",
             @"//[^\n]*",
             @"/[*]([*][^/]|[^*])*[*]/",
             @"'(\\.|[^\'\n])*'",    //< SOMEDAY: Not fully restrictive
@@ -973,7 +1148,9 @@ namespace actorcompiler
             @"\r\n",
             @"\n",
             @"::",
-            @"."
+            @":",
+            @"#[a-z]*", // Recognize preprocessor directives so that we can reject them
+            @".",
         }).Select( x=>new Regex(@"\G"+x, RegexOptions.Singleline) ).ToArray();
 
         IEnumerable<string> Tokenize(string text)

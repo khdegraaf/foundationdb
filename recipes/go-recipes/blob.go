@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,11 +22,14 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 )
+
+const API_VERSION int = 800
 
 const CHUNK_SIZE int = 5
 
@@ -78,7 +81,7 @@ func read_blob(t fdb.ReadTransactor, blob_subspace subspace.Subspace) ([]byte, e
 }
 
 func main() {
-	fdb.MustAPIVersion(610)
+	fdb.MustAPIVersion(API_VERSION)
 
 	db := fdb.MustOpenDefault()
 
@@ -94,9 +97,9 @@ func main() {
 
 	write_blob(db, blobspace, test)
 
-	ret, e := read_blob(db, blobspace)
+	ret, err := read_blob(db, blobspace)
 
-	if e == nil {
+	if err == nil {
 		fmt.Println(string(ret))
 	}
 }

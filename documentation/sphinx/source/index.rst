@@ -22,7 +22,7 @@ FoundationDB is a robust choice for a broad range of use cases:
 
 **FoundationDB supports flexible application architectures.** Your application can talk directly to FoundationDB, to a layer, or both. Layers provide new capability on top of FoundationDB but are stateless.
 
-The latest changes are detailed in :doc:`release-notes`. The documentation has the following sections:
+The latest changes are detailed in :ref:`release-notes`. The documentation has the following sections:
 
 * :doc:`why-foundationdb` describes the technical alternatives involved in NoSQL database design and explains the advantages of transaction processing at scale.
 
@@ -38,12 +38,19 @@ The latest changes are detailed in :doc:`release-notes`. The documentation has t
 
 * :doc:`administration` contains documentation on administering FoundationDB.
 
+* :doc:`monitored-metrics` contains documentation on monitoring and alerting for FoundationDB.
+
+* :doc:`redwood` contains documentation on Redwood Storage Engine.
+
+* :doc:`visibility` contains documentation related to Visibility into FoundationDB.
+
 .. toctree::
    :maxdepth: 1
    :titlesonly:
    :hidden:
 
    local-dev
+   internal-dev-tools
    why-foundationdb
    technical-overview
    client-design
@@ -51,4 +58,7 @@ The latest changes are detailed in :doc:`release-notes`. The documentation has t
    api-reference
    tutorials
    administration
+   monitored-metrics
+   redwood
+   visibility
    earlier-release-notes

@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,9 +25,11 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.apple.foundationdb.Database;
 import com.apple.foundationdb.FDB;
@@ -47,9 +49,17 @@ abstract class Context implements Runnable, AutoCloseable {
 	KeySelector nextKey, endKey;
 	Long lastVersion = null;
 
+	private static class TransactionState {
+		public Transaction transaction;
+
+	        public TransactionState(Transaction transaction) {
+		    this.transaction = transaction;
+		}
+	}
+
 	private String trName;
 	private List<Thread> children = new LinkedList<>();
-	private static Map<String, Transaction> transactionMap = new HashMap<>();
+	private static Map<String, TransactionState> transactionMap = new HashMap<>();
 	private static Map<Transaction, AtomicInteger> transactionRefCounts = new HashMap<>();
 
 	Context(Database db, byte[] prefix) {
@@ -69,8 +79,8 @@ abstract class Context implements Runnable, AutoCloseable {
 		try {
 			executeOperations();
 		} catch(Throwable t) {
-			// EAT
 			t.printStackTrace();
+			System.exit(1);
 		}
 		while(children.size() > 0) {
 			//System.out.println("Shutting down...waiting on " + children.size() + " threads");
@@ -91,10 +101,10 @@ abstract class Context implements Runnable, AutoCloseable {
 	}
 
 	private static synchronized Transaction getTransaction(String trName) {
-		Transaction tr = transactionMap.get(trName);
-		assert tr != null : "Null transaction";
-		addTransactionReference(tr);
-		return tr;
+		TransactionState state = transactionMap.get(trName);
+		assert state != null : "Null transaction";
+		addTransactionReference(state.transaction);
+		return state.transaction;
 	}
 
 	public Transaction getCurrentTransaction() {
@@ -105,59 +115,74 @@ abstract class Context implements Runnable, AutoCloseable {
 		if(tr != null) {
 			AtomicInteger count = transactionRefCounts.get(tr);
 			if(count.decrementAndGet() == 0) {
-				assert !transactionMap.containsValue(tr);
 				transactionRefCounts.remove(tr);
 				tr.close();
 			}
 		}
 	}
 
-	private static synchronized void updateTransaction(String trName, Transaction tr) {
-		releaseTransaction(transactionMap.put(trName, tr));
-		addTransactionReference(tr);
+        private static Transaction createTransaction(Database db) {
+	    return db.createTransaction();
 	}
 
-	private static synchronized boolean updateTransaction(String trName, Transaction oldTr, Transaction newTr) {
-		boolean added;
-		if(oldTr == null) {
-			added = (transactionMap.putIfAbsent(trName, newTr) == null);
-		}
-		else {
-			added = transactionMap.replace(trName, oldTr, newTr);
+	private static synchronized boolean newTransaction(Database db, String trName, boolean allowReplace) {
+		TransactionState oldState = transactionMap.get(trName);
+		if (oldState != null) {
+			if (allowReplace) {
+				releaseTransaction(oldState.transaction);
+			} else {
+				return false;
+			}
 		}
 
-		if(added) {
+		TransactionState newState = new TransactionState(createTransaction(db));
+
+		transactionMap.put(trName, newState);
+		addTransactionReference(newState.transaction);
+
+		return true;
+	}
+
+	private static synchronized boolean replaceTransaction(Database db, String trName, Transaction oldTr, Transaction newTr) {
+		TransactionState trState = transactionMap.get(trName);
+		assert trState != null : "Null transaction";
+
+		if(oldTr == null || trState.transaction == oldTr) {
+			if(newTr == null) {
+			    newTr = createTransaction(db);
+			}
+			releaseTransaction(trState.transaction);
 			addTransactionReference(newTr);
-			releaseTransaction(oldTr);
+			trState.transaction = newTr;
 			return true;
 		}
 
 		return false;
 	}
 
-	public void updateCurrentTransaction(Transaction tr) {
-		updateTransaction(trName, tr);
-	}
-
-	public boolean updateCurrentTransaction(Transaction oldTr, Transaction newTr) {
-		return updateTransaction(trName, oldTr, newTr);
-	}
-
 	public void newTransaction() {
-		Transaction tr = db.createTransaction();
-		updateCurrentTransaction(tr);
+		newTransaction(db, trName, true);
 	}
 
-	public void newTransaction(Transaction oldTr) {
-		Transaction newTr = db.createTransaction();
-		if(!updateCurrentTransaction(oldTr, newTr)) {
-			newTr.close();
-		}
+	public void replaceTransaction(Transaction tr) {
+		replaceTransaction(db, trName, null, tr);
+	}
+
+	public boolean replaceTransaction(Transaction oldTr, Transaction newTr) {
+		return replaceTransaction(db, trName, oldTr, newTr);
+	}
+
+	public void resetTransaction() {
+		replaceTransaction(db, trName, null, null);
+	}
+
+	public boolean resetTransaction(Transaction oldTr) {
+		return replaceTransaction(db, trName, oldTr, null);
 	}
 
 	public void switchTransaction(byte[] rawTrName) {
 		trName = ByteArrayUtil.printable(rawTrName);
-		newTransaction(null);
+		newTransaction(db, trName, false);
 	}
 
 	abstract void executeOperations() throws Throwable;
@@ -224,8 +249,8 @@ abstract class Context implements Runnable, AutoCloseable {
 
 	@Override
 	public void close() {
-		for(Transaction tr : transactionMap.values()) {
-			tr.close();
+		for(TransactionState tr : transactionMap.values()) {
+			tr.transaction.close();
 		}
 	}
 }

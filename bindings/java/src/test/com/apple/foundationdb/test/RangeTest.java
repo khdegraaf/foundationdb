@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,11 +34,10 @@ import com.apple.foundationdb.Transaction;
 import com.apple.foundationdb.async.AsyncIterable;
 
 public class RangeTest {
-	private static final int API_VERSION = 610;
 
 	public static void main(String[] args) {
-		System.out.println("About to use version " + API_VERSION);
-		FDB fdb = FDB.selectAPIVersion(API_VERSION);
+		System.out.println("About to use version " + TestApiVersion.CURRENT);
+		FDB fdb = FDB.selectAPIVersion(TestApiVersion.CURRENT);
 
 		try(Database db = fdb.open()) {
 			try {
@@ -64,7 +63,9 @@ public class RangeTest {
 
 			System.out.println("First transaction was successful");
 
-			checkRange(db.createTransaction());
+			try(Transaction tr = db.createTransaction()) {
+				checkRange(tr);
+			}
 
 			long version;
 			try(Transaction tr = db.createTransaction()) {
@@ -184,7 +185,6 @@ public class RangeTest {
 			String value = new String(kv.getValue());
 			System.out.println(" -- " + key + " -> " + value);
 		}
-
 	}
 
 	private RangeTest() {}

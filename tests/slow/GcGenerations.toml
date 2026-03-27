@@ -1,0 +1,34 @@
+[configuration]
+generateFearless = true
+processesPerMachine = 1
+machineCount = 20
+minimumRegions = 2
+coordinators = 1
+remoteConfig = 'remote_double'
+
+[[knobs]]
+max_write_transaction_life_versions = 5000000
+record_recover_at_in_cstate = true
+track_tlog_recovery = true
+# The GcGenerations workload intentionally builds up generations by injecting network degradation and timed
+# usage of process restarts. How long to inject network degradation is a sensitive value. Having
+# a high cc_recovery_init_req_growth_factor could mean that network degradation is healed too early, which
+# we do not want in this test. Therefore, a low value like 1.01 is used.
+cc_recovery_init_req_growth_factor = 1.01
+
+[[test]]
+testTitle = 'GcGenerations'
+
+    [[test.knobs]]
+    dbinfo_send_amount = 50
+
+    [[test.workload]]
+    testName = 'Cycle'
+    nodeCount = 3000
+    transactionsPerSecond = 250.0
+    testDuration = 300.0
+    expectedRate = 0
+
+    [[test.workload]]
+    testName = 'GcGenerations'
+    testDuration = 1000.0

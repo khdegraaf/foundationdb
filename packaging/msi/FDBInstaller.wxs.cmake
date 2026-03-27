@@ -150,13 +150,13 @@
             </Component>
 
             <Component Id='FDBCRegistryValue' Guid='{6ED940F3-75C8-4385-97D9-D7D0F211B17D}' Win64='yes'>
-              <RegistryKey Root='HKLM' Key='SOFTWARE\$(var.Manufacturer)\KeyValue\Client' Action='createAndRemoveOnUninstall'>
+              <RegistryKey Root='HKLM' Key='SOFTWARE\$(var.Manufacturer)\KeyValue\Client'>
                 <RegistryValue Name='Version' Type='string' Value='$(var.Version)' KeyPath='yes' />
               </RegistryKey>
             </Component>
 
             <Component Id='FDBSRegistryValue' Guid='{361A9B4A-A06F-4BFB-AFEA-B5F733C8BFDF}' Win64='yes'>
-              <RegistryKey Root='HKLM' Key='SOFTWARE\$(var.Manufacturer)\KeyValue\Server' Action='createAndRemoveOnUninstall'>
+              <RegistryKey Root='HKLM' Key='SOFTWARE\$(var.Manufacturer)\KeyValue\Server'>
                 <RegistryValue Name='Version' Type='string' Value='$(var.Version)' KeyPath='yes' />
               </RegistryKey>
             </Component>
@@ -284,7 +284,6 @@
                   <File Id='FDBPY$(var.PyVer)TUPLE' Name='tuple.py' DiskId='1' Source='$(var.PyPath)tuple.py' KeyPath='no'/>
                   <File Id='FDBPY$(var.PyVer)DIR' Name='directory_impl.py' DiskId='1' Source='$(var.PyPath)directory_impl.py' KeyPath='no'/>
                   <File Id='FDBPY$(var.PyVer)SUBS' Name='subspace_impl.py' DiskId='1' Source='$(var.PyPath)subspace_impl.py' KeyPath='no'/>
-                  <File Id='FDBPY$(var.PyVer)SIX' Name='six.py' DiskId='1' Source='$(var.PyPath)six.py' KeyPath='no'/>
                   <RemoveFile Id="Purge$(var.PyVer)PYC" Name="*.pyc" On="uninstall" />
                   <RemoveFile Id="Purge$(var.PyVer)PYO" Name="*.pyo" On="uninstall" />
                   <RemoveFile Id="Purge$(var.PyVer)Cache" Directory="PyTarget$(var.PyVer)CacheDir" Name="*.*" On="uninstall" />

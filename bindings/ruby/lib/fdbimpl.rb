@@ -5,7 +5,7 @@
 #
 # This source file is part of the FoundationDB open source project
 #
-# Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+# Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,8 +36,8 @@ module FDB
   module FDBC
     require 'rbconfig'
 
-    if RbConfig::CONFIG['host_cpu'] != "x86_64"
-      raise LoadError, "FoundationDB API only supported on x86_64 (not #{RbConfig::CONFIG['host_cpu']})"
+    unless ["x86_64", "arm64"].include? RbConfig::CONFIG['host_cpu']
+      raise LoadError, "FoundationDB API only supported on x86_64 and arm64 (not #{RbConfig::CONFIG['host_cpu']})"
     end
 
     case RbConfig::CONFIG['host_os']
@@ -85,7 +85,7 @@ module FDB
       attach_function :fdb_future_set_callback, [ :pointer, :fdb_future_callback, :pointer ], :fdb_error
 
       attach_function :fdb_future_get_error, [ :pointer ], :fdb_error
-      attach_function :fdb_future_get_version, [ :pointer, :pointer ], :fdb_error
+      attach_function :fdb_future_get_int64, [ :pointer, :pointer ], :fdb_error
       attach_function :fdb_future_get_key, [ :pointer, :pointer, :pointer ], :fdb_error
       attach_function :fdb_future_get_value, [ :pointer, :pointer, :pointer, :pointer ], :fdb_error
       attach_function :fdb_future_get_keyvalue_array, [ :pointer, :pointer, :pointer, :pointer ], :fdb_error
@@ -108,12 +108,15 @@ module FDB
       attach_function :fdb_transaction_get, [ :pointer, :pointer, :int, :int ], :pointer
       attach_function :fdb_transaction_get_key, [ :pointer, :pointer, :int, :int, :int, :int ], :pointer
       attach_function :fdb_transaction_get_range, [ :pointer, :pointer, :int, :int, :int, :pointer, :int, :int, :int, :int, :int, :int, :int, :int, :int ], :pointer
+      attach_function :fdb_transaction_get_estimated_range_size_bytes, [ :pointer, :pointer, :int, :pointer, :int ], :pointer
+      attach_function :fdb_transaction_get_range_split_points, [ :pointer, :pointer, :int, :pointer, :int, :int64 ], :pointer
       attach_function :fdb_transaction_set, [ :pointer, :pointer, :int, :pointer, :int ], :void
       attach_function :fdb_transaction_clear, [ :pointer, :pointer, :int ], :void
       attach_function :fdb_transaction_clear_range, [ :pointer, :pointer, :int, :pointer, :int ], :void
       attach_function :fdb_transaction_watch, [ :pointer, :pointer, :int ], :pointer
       attach_function :fdb_transaction_commit, [ :pointer ], :pointer
       attach_function :fdb_transaction_get_committed_version, [ :pointer, :pointer ], :fdb_error
+      attach_function :fdb_transaction_get_approximate_size, [ :pointer ], :pointer
       attach_function :fdb_transaction_get_versionstamp, [ :pointer ], :pointer
       attach_function :fdb_transaction_on_error, [ :pointer, :fdb_error ], :pointer
       attach_function :fdb_transaction_reset, [ :pointer ], :void
@@ -125,6 +128,12 @@ module FDB
              :key_length, :int,
              :value, :pointer,
              :value_length, :int
+    end
+
+    class KeyStruct < FFI::Struct
+      pack 4
+      layout :key, :pointer,
+             :key_length, :int
     end
 
     def self.check_error(code)
@@ -443,11 +452,11 @@ module FDB
     end
   end
 
-  class Version < LazyFuture
+  class Int64Future < LazyFuture
     def getter
-      version = FFI::MemoryPointer.new :int64
-      FDBC.check_error FDBC.fdb_future_get_version(@fpointer, version)
-      @value = version.read_long_long
+      val = FFI::MemoryPointer.new :int64
+      FDBC.check_error FDBC.fdb_future_get_int64(@fpointer, val)
+      @value = val.read_long_long
     end
     private :getter
   end
@@ -467,6 +476,22 @@ module FDB
         KeyValue.new(x[:key].read_bytes(x[:key_length]),
                      x[:value].read_bytes(x[:value_length]))
        }, count.read_int, more.read_int]
+    end
+  end
+
+  class FutureKeyArray < Future
+    def wait
+      block_until_ready
+
+      ks = FFI::MemoryPointer.new :pointer
+      count = FFI::MemoryPointer.new :int
+      FDBC.check_error FDBC.fdb_future_get_key_array(@fpointer, kvs, count)
+      ks = ks.read_pointer
+
+      (0..count.read_int-1).map{|i|
+        x = FDBC::KeyStruct.new(ks + (i * FDBC::KeyStruct.size))
+        x[:key].read_bytes(x[:key_length])
+       }
     end
   end
 
@@ -687,7 +712,7 @@ module FDB
     end
 
     def get_read_version
-      Version.new(FDBC.fdb_transaction_get_read_version @tpointer)
+      Int64Future.new(FDBC.fdb_transaction_get_read_version @tpointer)
     end
 
     def get(key)
@@ -816,6 +841,22 @@ module FDB
       prefix = prefix.dup.force_encoding "BINARY"
       get_range(prefix, FDB.strinc(prefix), options, &block)
     end
+
+    def get_estimated_range_size_bytes(begin_key, end_key)
+      bkey = FDB.key_to_bytes(begin_key)
+      ekey = FDB.key_to_bytes(end_key)
+      Int64Future.new(FDBC.fdb_transaction_get_estimated_range_size_bytes(@tpointer, bkey, bkey.bytesize, ekey, ekey.bytesize))
+    end
+
+    def get_range_split_points(begin_key, end_key, chunk_size)
+      if chunk_size <=0
+        raise ArgumentError, "Invalid chunk size"
+      end
+      bkey = FDB.key_to_bytes(begin_key)
+      ekey = FDB.key_to_bytes(end_key)
+      FutureKeyArray.new(FDBC.fdb_transaction_get_range_split_points(@tpointer, bkey, bkey.bytesize, ekey, ekey.bytesize, chunk_size))
+    end
+
   end
 
   TransactionRead.class_variable_set("@@StreamingMode", @@StreamingMode)
@@ -902,6 +943,10 @@ module FDB
       version = FFI::MemoryPointer.new :int64
       FDBC.check_error FDBC.fdb_transaction_get_committed_version(@tpointer, version)
       version.read_long_long
+    end
+
+    def get_approximate_size
+      Int64Future.new(FDBC.fdb_transaction_get_approximate_size @tpointer)
     end
 
     def get_versionstamp

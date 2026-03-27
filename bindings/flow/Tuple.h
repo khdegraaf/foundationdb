@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,94 +24,105 @@
 #pragma once
 
 #include "bindings/flow/fdb_flow.h"
+#include "fdbclient/TupleVersionstamp.h"
+
+typedef TupleVersionstamp Versionstamp;
 
 namespace FDB {
-	struct Uuid {
-		const static size_t SIZE;
+struct Uuid {
+	const static size_t SIZE;
 
-		Uuid(StringRef const& data);
+	Uuid(StringRef const& data);
 
-		StringRef getData() const;
+	StringRef getData() const;
 
-		// Comparisons
-		bool operator==(Uuid const& other) const;
-		bool operator!=(Uuid const& other) const;
-		bool operator<(Uuid const& other) const;
-		bool operator<=(Uuid const& other) const;
-		bool operator>(Uuid const& other) const;
-		bool operator>=(Uuid const& other) const;
-	private:
-		Standalone<StringRef> data;
-	};
+	// Comparisons
+	bool operator==(Uuid const& other) const;
+	bool operator!=(Uuid const& other) const;
+	bool operator<(Uuid const& other) const;
+	bool operator<=(Uuid const& other) const;
+	bool operator>(Uuid const& other) const;
+	bool operator>=(Uuid const& other) const;
 
-	struct Tuple {
-		Tuple() {}
+private:
+	Standalone<StringRef> data;
+};
 
-		static Tuple unpack(StringRef const& str);
+struct Tuple {
+	Tuple() {}
 
-		Tuple& append(Tuple const& tuple);
-		Tuple& append(StringRef const& str, bool utf8=false);
-		Tuple& append(int32_t);
-		Tuple& append(int64_t);
-		Tuple& append(bool);
-		Tuple& append(float);
-		Tuple& append(double);
-		Tuple& append(Uuid);
-		Tuple& appendNested(Tuple const&);
-		Tuple& appendNull();
+	static Tuple unpack(StringRef const& str);
 
-		StringRef pack() const { return StringRef(data.begin(), data.size()); }
+	Tuple& append(Tuple const& tuple);
+	Tuple& append(StringRef const& str, bool utf8 = false);
+	Tuple& append(int32_t);
+	Tuple& append(int64_t);
+	Tuple& append(bool);
+	Tuple& append(float);
+	Tuple& append(double);
+	Tuple& append(Uuid);
+	Tuple& appendNested(Tuple const&);
+	Tuple& appendNull();
+	Tuple& appendVersionstamp(Versionstamp const&);
 
-		template <typename T>
-		Tuple& operator<<(T const& t) {
-			return append(t);
-		}
+	Standalone<StringRef> pack() const {
+		return Standalone<StringRef>(StringRef(data.begin(), data.size()), data.arena());
+	}
 
-		enum ElementType { NULL_TYPE, INT, BYTES, UTF8, BOOL, FLOAT, DOUBLE, UUID, NESTED };
+	template <typename T>
+	Tuple& operator<<(T const& t) {
+		return append(t);
+	}
 
-		// this is number of elements, not length of data
-		size_t size() const { return offsets.size(); }
+	enum ElementType { NULL_TYPE, INT, BYTES, UTF8, BOOL, FLOAT, DOUBLE, UUID, NESTED, VERSIONSTAMP };
 
-		ElementType getType(size_t index) const;
-		Standalone<StringRef> getString(size_t index) const;
-		int64_t getInt(size_t index) const;
-		bool getBool(size_t index) const;
-		float getFloat(size_t index) const;
-		double getDouble(size_t index) const;
-		Uuid getUuid(size_t index) const;
-		Tuple getNested(size_t index) const;
+	// this is number of elements, not length of data
+	size_t size() const { return offsets.size(); }
 
-		KeyRange range(Tuple const& tuple = Tuple()) const;
+	ElementType getType(size_t index) const;
+	Standalone<StringRef> getString(size_t index) const;
+	Versionstamp getVersionstamp(size_t index) const;
+	int64_t getInt(size_t index) const;
+	bool getBool(size_t index) const;
+	float getFloat(size_t index) const;
+	double getDouble(size_t index) const;
+	Uuid getUuid(size_t index) const;
+	Tuple getNested(size_t index) const;
 
-		Tuple subTuple(size_t beginIndex, size_t endIndex = std::numeric_limits<size_t>::max()) const;
+	KeyRange range(Tuple const& tuple = Tuple()) const;
 
-		// Comparisons
-		bool operator==(Tuple const& other) const;
-		bool operator!=(Tuple const& other) const;
-		bool operator<(Tuple const& other) const;
-		bool operator<=(Tuple const& other) const;
-		bool operator>(Tuple const& other) const;
-		bool operator>=(Tuple const& other) const;
+	Tuple subTuple(size_t beginIndex, size_t endIndex = std::numeric_limits<size_t>::max()) const;
 
-	private:
-		static const uint8_t NULL_CODE;
-		static const uint8_t BYTES_CODE;
-		static const uint8_t STRING_CODE;
-		static const uint8_t NESTED_CODE;
-		static const uint8_t INT_ZERO_CODE;
-		static const uint8_t POS_INT_END;
-		static const uint8_t NEG_INT_START;
-		static const uint8_t FLOAT_CODE;
-		static const uint8_t DOUBLE_CODE;
-		static const uint8_t FALSE_CODE;
-		static const uint8_t TRUE_CODE;
-		static const uint8_t UUID_CODE;
+	// Comparisons
+	bool operator==(Tuple const& other) const;
+	bool operator!=(Tuple const& other) const;
+	bool operator<(Tuple const& other) const;
+	bool operator<=(Tuple const& other) const;
+	bool operator>(Tuple const& other) const;
+	bool operator>=(Tuple const& other) const;
 
-		Tuple(const StringRef& data);
-		Tuple(Standalone<VectorRef<uint8_t>> data, std::vector<size_t> offsets);
-		Standalone<VectorRef<uint8_t>> data;
-		std::vector<size_t> offsets;
-	};
-}
+private:
+	static const uint8_t NULL_CODE;
+	static const uint8_t BYTES_CODE;
+	static const uint8_t STRING_CODE;
+	static const uint8_t NESTED_CODE;
+	static const uint8_t INT_ZERO_CODE;
+	static const uint8_t POS_INT_END;
+	static const uint8_t NEG_INT_START;
+	static const uint8_t FLOAT_CODE;
+	static const uint8_t DOUBLE_CODE;
+	static const uint8_t FALSE_CODE;
+	static const uint8_t TRUE_CODE;
+	static const uint8_t UUID_CODE;
+	// Java Tuple layer VERSIONSTAMP has 96 bits(12 bytes).
+	// It has additional 2 bytes user code than the internal VERSIONTAMP of size 10 bytes
+	static const uint8_t VERSIONSTAMP_96_CODE;
+
+	Tuple(const StringRef& data);
+	Tuple(Standalone<VectorRef<uint8_t>> data, std::vector<size_t> offsets);
+	Standalone<VectorRef<uint8_t>> data;
+	std::vector<size_t> offsets;
+};
+} // namespace FDB
 
 #endif /* _FDB_TUPLE_H_ */

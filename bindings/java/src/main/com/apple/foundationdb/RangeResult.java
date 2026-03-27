@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,9 +27,15 @@ class RangeResult {
 	final List<KeyValue> values;
 	final boolean more;
 
+	//mostly present for testing purposes
+	RangeResult(List<KeyValue> values, boolean more) {
+		this.values = values;
+		this.more = more;
+	}
+
 	RangeResult(byte[] keyValues, int[] lengths, boolean more) {
 		if(lengths.length % 2 != 0) {
-			throw new IllegalArgumentException("There needs to be an even number of lenghts!");
+			throw new IllegalArgumentException("There needs to be an even number of lengths!");
 		}
 
 		int count = lengths.length / 2;
@@ -50,5 +56,23 @@ class RangeResult {
 			values.add(new KeyValue(k, v));
 		}
 		this.more = more;
+	}
+
+	RangeResult(RangeResultDirectBufferIterator iterator) {
+		iterator.readResultsSummary();
+		more = iterator.hasMore();
+
+		int count = iterator.count();
+		values = new ArrayList<KeyValue>(count);
+
+		for (int i = 0; i < count; ++i) {
+			values.add(iterator.next());
+		}
+	}
+
+	public RangeResultSummary getSummary() {
+		final int keyCount = values.size();
+		final byte[] lastKey = keyCount > 0 ? values.get(keyCount -1).getKey() : null;
+		return new RangeResultSummary(lastKey, keyCount, more);
 	}
 }

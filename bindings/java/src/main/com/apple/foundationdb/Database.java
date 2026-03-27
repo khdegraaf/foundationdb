@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ package com.apple.foundationdb;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Function;
+import com.apple.foundationdb.tuple.Tuple;
 
 /**
  * A mutable, lexicographically ordered mapping from binary keys to binary values.
@@ -41,11 +42,12 @@ import java.util.function.Function;
  */
 public interface Database extends AutoCloseable, TransactionContext {
 	/**
-	 * Creates a {@link Transaction} that operates on this {@code Database}.<br>
+	 * Creates a {@link Transaction} that operates on this {@code Database}.
 	 * <br>
 	 * <b>Note:</b> Java transactions automatically set the {@link TransactionOptions#setUsedDuringCommitProtectionDisable}
 	 *  option. This is because the Java bindings disallow use of {@code Transaction} objects after
-	 *  {@link Transaction#onError} is called.
+	 *  {@link Transaction#onError} is called.<br>
+	 * <br>
 	 *
 	 * @return a newly created {@code Transaction} that reads from and writes to this {@code Database}.
 	 */
@@ -63,11 +65,31 @@ public interface Database extends AutoCloseable, TransactionContext {
 	Transaction createTransaction(Executor e);
 
 	/**
+	 * Creates a {@link Transaction} that operates on this {@code Database} with the given {@link Executor}
+	 * for asynchronous callbacks.
+	 *
+	 * @param e the {@link Executor} to use when executing asynchronous callbacks for the database
+	 * @param eventKeeper the {@link EventKeeper} to use when tracking instrumented calls for the transaction.
+	 *
+	 * @return a newly created {@code Transaction} that reads from and writes to this {@code Database}.
+	 */
+	Transaction createTransaction(Executor e, EventKeeper eventKeeper);
+
+	/**
 	 * Returns a set of options that can be set on a {@code Database}
 	 *
 	 * @return a set of database-specific options affecting this {@code Database}
 	 */
 	DatabaseOptions options();
+
+	/**
+	 * Returns a value which indicates the saturation of the client
+	 * <br>
+	 * <b>Note:</b> By default, this value is updated every second
+	 *
+	 * @return a value where 0 indicates that the client is idle and 1 (or larger) indicates that the client is saturated.
+	 */
+	double getMainThreadBusyness();
 
 	/**
 	 * Runs a read-only transactional function against this {@code Database} with retry logic.
@@ -245,4 +267,21 @@ public interface Database extends AutoCloseable, TransactionContext {
 	 */
 	@Override
 	void close();
+
+	/**
+	 * Returns client-side status information
+	 *
+	 * @return a {@code CompletableFuture} containing a JSON string with client status health information
+	 */
+	default CompletableFuture<byte[]> getClientStatus() {
+		return getClientStatus(getExecutor());
+	}
+
+	/**
+	 * Returns client-side status information
+	 *
+	 * @param e the {@link Executor} to use for asynchronous callbacks
+	 * @return a {@code CompletableFuture} containing a JSON string with client status health information
+	 */
+	CompletableFuture<byte[]> getClientStatus(Executor e);
 }

@@ -18,8 +18,8 @@
  * limitations under the License.
  */
 
-
 #include "flow/FileTraceLogWriter.h"
+#include "flow/Platform.h"
 #include "flow/flow.h"
 #include "flow/ThreadHelper.actor.h"
 
@@ -28,12 +28,12 @@
 #define __write ::write
 #define __close ::close
 #define __fsync ::fsync
-#define TRACEFILE_FLAGS O_WRONLY | O_CREAT | O_EXCL
+#define TRACEFILE_FLAGS O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC
 #define TRACEFILE_MODE 0664
 #elif defined(_WIN32)
-#include <windows.h>
-#undef max
-#undef min
+// #include <windows.h>
+// #undef max
+// #undef min
 #include <io.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -46,9 +46,55 @@
 #endif
 
 #include <fcntl.h>
+#include <cmath>
 
-FileTraceLogWriter::FileTraceLogWriter(std::string directory, std::string processName, std::string basename, std::string extension, uint64_t maxLogsSize, std::function<void()> onError)
-	: directory(directory), processName(processName), basename(basename), extension(extension), maxLogsSize(maxLogsSize), traceFileFD(-1), index(0), onError(onError) {}
+struct IssuesListImpl {
+	IssuesListImpl() = default;
+	void addIssue(std::string const& issue) {
+		MutexHolder h(mutex);
+		issues.insert(issue);
+	}
+
+	void retrieveIssues(std::set<std::string>& out) const {
+		MutexHolder h(mutex);
+		for (auto const& i : issues) {
+			out.insert(i);
+		}
+	}
+
+	void resolveIssue(std::string const& issue) {
+		MutexHolder h(mutex);
+		issues.erase(issue);
+	}
+
+private:
+	mutable Mutex mutex;
+	std::set<std::string> issues;
+};
+
+IssuesList::IssuesList() : impl(std::make_unique<IssuesListImpl>()) {}
+IssuesList::~IssuesList() = default;
+void IssuesList::addIssue(std::string const& issue) {
+	impl->addIssue(issue);
+}
+void IssuesList::retrieveIssues(std::set<std::string>& out) const {
+	impl->retrieveIssues(out);
+}
+void IssuesList::resolveIssue(std::string const& issue) {
+	impl->resolveIssue(issue);
+}
+
+FileTraceLogWriter::FileTraceLogWriter(std::string const& directory,
+                                       std::string const& processName,
+                                       std::string const& basename,
+                                       std::string const& extension,
+                                       std::string const& tracePartialFileSuffix,
+                                       uint64_t maxLogsSize,
+                                       std::function<void()> const& onError,
+                                       Reference<ITraceLogIssuesReporter> const& issues)
+  : directory(directory), processName(processName), basename(basename), extension(extension),
+    tracePartialFileSuffix(tracePartialFileSuffix), maxLogsSize(maxLogsSize), traceFileFD(-1), index(0), issues(issues),
+    onError(onError) {}
 
 void FileTraceLogWriter::addref() {
 	ReferenceCounted<FileTraceLogWriter>::addref();
@@ -68,16 +114,35 @@ void FileTraceLogWriter::lastError(int err) {
 }
 
 void FileTraceLogWriter::write(const std::string& str) {
-	auto ptr = str.c_str();
-	int remaining = str.size();
+	write(str.data(), str.size());
+}
 
-	while ( remaining ) {
-		int ret = __write( traceFileFD, ptr, remaining );
-		if ( ret > 0 ) {
+void FileTraceLogWriter::write(const StringRef& str) {
+	write(reinterpret_cast<const char*>(str.begin()), str.size());
+}
+
+void FileTraceLogWriter::write(const char* str, size_t len) {
+	if (traceFileFD < 0) {
+		return;
+	}
+	auto ptr = str;
+	int remaining = len;
+	bool needsResolve = false;
+
+	while (remaining) {
+		int ret = __write(traceFileFD, ptr, remaining);
+		if (ret > 0) {
 			lastError(0);
 			remaining -= ret;
 			ptr += ret;
+			if (needsResolve) {
+				issues->resolveIssue("trace_log_file_write_error");
+				needsResolve = false;
+			}
 		} else {
+			issues->addIssue("trace_log_file_write_error");
+			needsResolve = true;
+			fprintf(stderr, "Unexpected error [%d] (%s) when writing to trace file.\n", errno, strerror(errno));
 			lastError(errno);
 			threadSleep(0.1);
 		}
@@ -86,33 +151,74 @@ void FileTraceLogWriter::write(const std::string& str) {
 
 void FileTraceLogWriter::open() {
 	cleanupTraceFiles();
+	bool needsResolve = false;
 
-	auto finalname = format("%s.%d.%s", basename.c_str(), ++index, extension.c_str());
-	while ( (traceFileFD = __open( finalname.c_str(), TRACEFILE_FLAGS, TRACEFILE_MODE )) == -1 ) {
+	++index;
+
+	// this allows one process to write 10 billion log files
+	// this should be enough - if not we could make the base larger...
+	ASSERT(index > 0);
+	auto indexWidth = unsigned(::floor(log10f(float(index))));
+
+	// index is at most 2^32 - 1. 2^32 - 1 < 10^10 - therefore
+	// log10(index) < 10
+	UNSTOPPABLE_ASSERT(indexWidth < 10);
+
+	finalname =
+	    format("%s.%d.%d.%s%s", basename.c_str(), indexWidth, index, extension.c_str(), tracePartialFileSuffix.c_str());
+	while ((traceFileFD = __open(finalname.c_str(), TRACEFILE_FLAGS, TRACEFILE_MODE)) == -1) {
 		lastError(errno);
-		if (errno == EEXIST)
-			finalname = format("%s.%d.%s", basename.c_str(), ++index, extension.c_str());
-		else {
-			fprintf(stderr, "ERROR: could not create trace log file `%s' (%d: %s)\n", finalname.c_str(), errno, strerror(errno));
+		if (errno == EEXIST) {
+			++index;
+			indexWidth = unsigned(::floor(log10f(float(index))));
 
-			int errorNum = errno;
-			onMainThreadVoid([finalname, errorNum]{
+			UNSTOPPABLE_ASSERT(indexWidth < 10);
+			finalname = format("%s.%d.%d.%s%s",
+			                   basename.c_str(),
+			                   indexWidth,
+			                   index,
+			                   extension.c_str(),
+			                   tracePartialFileSuffix.c_str());
+		} else {
+			// Save errno before issuing subsequent system calls,
+			// such as write(2) via fprintf, in case that fails for
+			// some other reason.
+			int saveErrno = errno;
+			fprintf(stderr,
+			        "ERROR: could not create trace log file `%s' (%d: %s)\n",
+			        finalname.c_str(),
+			        saveErrno,
+			        strerror(saveErrno));
+			issues->addIssue("trace_log_could_not_create_file");
+			needsResolve = true;
+
+			onMainThreadVoid([finalname = finalname, saveErrno] {
 				TraceEvent(SevWarnAlways, "TraceFileOpenError")
-					.detail("Filename", finalname)
-					.detail("ErrorCode", errorNum)
-					.detail("Error", strerror(errorNum))
-					.trackLatest("TraceFileOpenError"); }, NULL);
+				    .detail("Filename", finalname)
+				    .detail("ErrorCode", saveErrno)
+				    .detail("Error", strerror(saveErrno))
+				    .trackLatest("TraceFileOpenError");
+			});
 			threadSleep(FLOW_KNOBS->TRACE_RETRY_OPEN_INTERVAL);
 		}
 	}
-	onMainThreadVoid([]{ latestEventCache.clear("TraceFileOpenError"); }, NULL);
+	onMainThreadVoid([] { latestEventCache.clear("TraceFileOpenError"); });
+	if (needsResolve) {
+		issues->resolveIssue("trace_log_could_not_create_file");
+	}
 	lastError(0);
 }
 
 void FileTraceLogWriter::close() {
 	if (traceFileFD >= 0) {
-		while ( __close(traceFileFD) ) threadSleep(0.1);
+		while (__close(traceFileFD))
+			threadSleep(0.1);
 	}
+	traceFileFD = -1;
+	if (!tracePartialFileSuffix.empty()) {
+		renameFile(finalname, finalname.substr(0, finalname.size() - tracePartialFileSuffix.size()));
+	}
+	finalname = "";
 }
 
 void FileTraceLogWriter::roll() {
@@ -121,67 +227,49 @@ void FileTraceLogWriter::roll() {
 }
 
 void FileTraceLogWriter::sync() {
-	__fsync(traceFileFD);
-}
-
-void FileTraceLogWriter::extractTraceFileNameInfo(std::string const& filename, std::string &root, int &index) {
-	int split = filename.find_last_of('.', filename.size() - 5);
-	root = filename.substr(0, split);
-	if(sscanf(filename.substr(split + 1, filename.size() - split - 4).c_str(), "%d", &index) == EOF) {
-		index = -1;
+	if (__fsync(traceFileFD) != 0) {
+		fprintf(stderr, "ERROR: fsync(%s): %d, %s\n", finalname.c_str(), errno, strerror(errno));
 	}
-}
-
-bool FileTraceLogWriter::compareTraceFileName (std::string const& f1, std::string const& f2) {
-	std::string root1;
-	std::string root2;
-
-	int index1;
-	int index2;
-
-	extractTraceFileNameInfo(f1, root1, index1);
-	extractTraceFileNameInfo(f2, root2, index2);
-
-	if(root1 != root2)
-		return root1 < root2;
-	if(index1 != index2)
-		return index1 < index2;
-
-	return f1 < f2;
-}
-
-bool FileTraceLogWriter::reverseCompareTraceFileName(std::string f1, std::string f2) {
-	return compareTraceFileName(f2, f1);
 }
 
 void FileTraceLogWriter::cleanupTraceFiles() {
 	// Setting maxLogsSize=0 disables trace file cleanup based on dir size
-	if(!g_network->isSimulated() && maxLogsSize > 0) {
+	if (!g_network->isSimulated() && maxLogsSize > 0) {
 		try {
+			// Rename/finalize any stray files ending in tracePartialFileSuffix for this process.
+			if (!tracePartialFileSuffix.empty()) {
+				for (const auto& f : platform::listFiles(directory, tracePartialFileSuffix)) {
+					if (f.substr(0, processName.length()) == processName) {
+						renameFile(f, f.substr(0, f.size() - tracePartialFileSuffix.size()));
+					}
+				}
+			}
+
 			std::vector<std::string> existingFiles = platform::listFiles(directory, extension);
 			std::vector<std::string> existingTraceFiles;
 
-			for(auto f = existingFiles.begin(); f != existingFiles.end(); ++f) {
-				if(f->substr(0, processName.length()) == processName) {
+			for (auto f = existingFiles.begin(); f != existingFiles.end(); ++f) {
+				if (f->substr(0, processName.length()) == processName) {
 					existingTraceFiles.push_back(*f);
 				}
 			}
 
 			// reverse sort, so we preserve the most recent files and delete the oldest
-			std::sort(existingTraceFiles.begin(), existingTraceFiles.end(), FileTraceLogWriter::reverseCompareTraceFileName);
+			std::sort(existingTraceFiles.begin(), existingTraceFiles.end(), std::greater<std::string>());
 
-			int64_t runningTotal = 0;
-			std::vector<std::string>::iterator fileListIterator = existingTraceFiles.begin();
+			uint64_t runningTotal = 0;
+			auto fileListIterator = existingTraceFiles.begin();
 
-			while(runningTotal < maxLogsSize && fileListIterator != existingTraceFiles.end()) {
+			while (runningTotal < maxLogsSize && fileListIterator != existingTraceFiles.end()) {
 				runningTotal += (fileSize(joinPath(directory, *fileListIterator)) + FLOW_KNOBS->ZERO_LENGTH_FILE_PAD);
 				++fileListIterator;
 			}
 
-			while(fileListIterator != existingTraceFiles.end()) {
+			while (fileListIterator != existingTraceFiles.end()) {
 				deleteFile(joinPath(directory, *fileListIterator));
 				++fileListIterator;
 			}
-		} catch( Error & ) {}
+		} catch (Error&) {
+		}
 	}
 }

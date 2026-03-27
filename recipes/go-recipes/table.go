@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,12 +22,15 @@ package main
 
 import (
 	"fmt"
+	"log"
+
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
-	"log"
 )
+
+const API_VERSION int = 800
 
 func clear_subspace(trtr fdb.Transactor, sub subspace.Subspace) error {
 	_, err := trtr.Transact(func(tr fdb.Transaction) (interface{}, error) {
@@ -93,14 +96,14 @@ func (tbl Table) TableSetRow(trtr fdb.Transactor, row int, cols ...interface{}) 
 
 func (tbl Table) TableGetRow(tr fdb.ReadTransactor, row int) ([]interface{}, error) {
 	item, err := tr.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
-		kr, e := fdb.PrefixRange(tbl.row.Pack(tuple.Tuple{row}))
-		if e != nil {
-			return nil, e
+		kr, err := fdb.PrefixRange(tbl.row.Pack(tuple.Tuple{row}))
+		if err != nil {
+			return nil, err
 		}
 
-		slice, e := rtr.GetRange(kr, fdb.RangeOptions{0, -1, false}).GetSliceWithError()
-		if e != nil {
-			return nil, e
+		slice, err := rtr.GetRange(kr, fdb.RangeOptions{0, -1, false}).GetSliceWithError()
+		if err != nil {
+			return nil, err
 		}
 
 		ret := make([]interface{}, len(slice))
@@ -119,14 +122,14 @@ func (tbl Table) TableGetRow(tr fdb.ReadTransactor, row int) ([]interface{}, err
 
 func (tbl Table) TableGetCol(tr fdb.ReadTransactor, col int) ([]interface{}, error) {
 	item, err := tr.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
-		kr, e := fdb.PrefixRange(tbl.col.Pack(tuple.Tuple{col}))
-		if e != nil {
-			return nil, e
+		kr, err := fdb.PrefixRange(tbl.col.Pack(tuple.Tuple{col}))
+		if err != nil {
+			return nil, err
 		}
 
-		slice, e := rtr.GetRange(kr, fdb.RangeOptions{0, -1, false}).GetSliceWithError()
-		if e != nil {
-			return nil, e
+		slice, err := rtr.GetRange(kr, fdb.RangeOptions{0, -1, false}).GetSliceWithError()
+		if err != nil {
+			return nil, err
 		}
 
 		ret := make([]interface{}, len(slice))
@@ -144,7 +147,7 @@ func (tbl Table) TableGetCol(tr fdb.ReadTransactor, col int) ([]interface{}, err
 }
 
 func main() {
-	fdb.MustAPIVersion(610)
+	fdb.MustAPIVersion(API_VERSION)
 
 	db := fdb.MustOpenDefault()
 

@@ -3,7 +3,7 @@
 #
 # This source file is part of the FoundationDB open source project
 #
-# Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+# Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,22 +27,29 @@ import fdb
 
 
 def initialize_logger_level(logging_level):
+  
     logger = get_logger()
 
-    assert logging_level in ["DEBUG", "INFO", "WARNING", "ERROR"]
+    # Map logging levels to their corresponding constants
+    LOGGING_LEVELS = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+    }
 
-    if logging_level == "DEBUG":
-        logger.setLevel(logging.DEBUG)
-    elif logging_level == "INFO":
-        logger.setLevel(logging.INFO)
-    elif logging_level == "WARNING":
-        logger.setLevel(logging.WARNING)
-    elif logging_level == "ERROR":
-        logger.setLevel(logging.ERROR)
+    if logging_level not in LOGGING_LEVELS:
+        raise ValueError(f"Invalid logging level: {logging_level}")
+    
+    logger.setLevel(LOGGING_LEVELS[logging_level])
+
+
+
+
 
 
 def get_logger():
-    return logging.getLogger('foundationdb.bindingtester')
+    return logging.getLogger("foundationdb.bindingtester")
 
 
 # Attempts to get the name associated with a process termination signal
@@ -58,11 +65,11 @@ def signal_number_to_name(signal_num):
 
 
 def import_subclasses(filename, module_path):
-    for f in glob.glob(os.path.join(os.path.dirname(filename), '*.py')):
+    for f in glob.glob(os.path.join(os.path.dirname(filename), "*.py")):
         fn = os.path.basename(f)
-        if fn == '__init__.py':
+        if fn == "__init__.py":
             continue
-        __import__('%s.%s' % (module_path, os.path.splitext(fn)[0]))
+        __import__("%s.%s" % (module_path, os.path.splitext(fn)[0]))
 
 
 # Attempts to unpack a subspace
@@ -73,4 +80,6 @@ def subspace_to_tuple(subspace):
         return fdb.tuple.unpack(subspace.key())
     except Exception as e:
         get_logger().debug(e)
-        raise Exception('The binding tester does not support subspaces with non-tuple raw prefixes')
+        raise Exception(
+            "The binding tester does not support subspaces with non-tuple raw prefixes"
+        )

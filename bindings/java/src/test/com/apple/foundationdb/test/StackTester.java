@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.function.Function;
@@ -39,6 +40,7 @@ import com.apple.foundationdb.FDB;
 import com.apple.foundationdb.FDBException;
 import com.apple.foundationdb.KeySelector;
 import com.apple.foundationdb.KeyValue;
+import com.apple.foundationdb.KeyArrayResult;
 import com.apple.foundationdb.LocalityUtil;
 import com.apple.foundationdb.MutationType;
 import com.apple.foundationdb.Range;
@@ -196,7 +198,7 @@ public class StackTester {
 				inst.tr.options().setNextWriteNoWriteConflictRange();
 			}
 			else if(op == StackOperation.RESET) {
-				inst.context.newTransaction();
+				inst.context.resetTransaction();
 			}
 			else if(op == StackOperation.CANCEL) {
 				inst.tr.cancel();
@@ -205,6 +207,16 @@ public class StackTester {
 				List<Object> params = inst.popParams(1).join();
 				CompletableFuture<byte[]> f = inst.readTcx.read(readTr -> readTr.get((byte[])params.get(0)));
 				inst.push(f);
+			}
+			else if (op == StackOperation.GET_ESTIMATED_RANGE_SIZE) {
+				List<Object> params = inst.popParams(2).join();
+				Long size = inst.readTr.getEstimatedRangeSizeBytes((byte[])params.get(0), (byte[])params.get(1)).join();
+				inst.push("GOT_ESTIMATED_RANGE_SIZE".getBytes());
+			}
+			else if (op == StackOperation.GET_RANGE_SPLIT_POINTS) {
+				List<Object> params = inst.popParams(3).join();
+				KeyArrayResult splitPoints = inst.readTr.getRangeSplitPoints((byte[])params.get(0), (byte[])params.get(1), (long)params.get(2)).join();
+				inst.push("GOT_RANGE_SPLIT_POINTS".getBytes());
 			}
 			else if(op == StackOperation.GET_RANGE) {
 				List<Object> params = inst.popParams(5).join();
@@ -261,6 +273,10 @@ public class StackTester {
 				inst.context.lastVersion = inst.tr.getCommittedVersion();
 				inst.push("GOT_COMMITTED_VERSION".getBytes());
 			}
+			else if(op == StackOperation.GET_APPROXIMATE_SIZE) {
+				Long size = inst.tr.getApproximateSize().join();
+				inst.push("GOT_APPROXIMATE_SIZE".getBytes());
+			}
 			else if(op == StackOperation.GET_VERSIONSTAMP) {
 				inst.push(inst.tr.getVersionstamp());
 			}
@@ -285,12 +301,12 @@ public class StackTester {
 
 				try {
 					Transaction tr = inst.tr.onError(err).join();
-					if(!inst.setTransaction(tr)) {
+					if(!inst.replaceTransaction(tr)) {
 						tr.close();
 					}
 				}
 				catch(Throwable t) {
-					inst.context.newTransaction(); // Other bindings allow reuse of non-retryable transactions, so we need to emulate that behavior.
+					inst.context.resetTransaction(); // Other bindings allow reuse of non-retryable transactions, so we need to emulate that behavior.
 					throw t;
 				}
 
@@ -368,9 +384,13 @@ public class StackTester {
 			else if (op == StackOperation.TUPLE_SORT) {
 				int listSize = StackUtils.getInt(inst.popParam().join());
 				List<Object> rawElements = inst.popParams(listSize).join();
-				List<Tuple> tuples = new ArrayList<Tuple>(listSize);
+				List<Tuple> tuples = new ArrayList<>(listSize);
 				for(Object o : rawElements) {
-					tuples.add(Tuple.fromBytes((byte[])o));
+					// Unpacking a tuple keeps around the serialized representation and uses
+					// it for comparison if it's available. To test semantic comparison, recreate
+					// the tuple from the item list.
+					Tuple t = Tuple.fromBytes((byte[])o);
+					tuples.add(Tuple.fromList(t.getItems()));
 				}
 				Collections.sort(tuples);
 				for(Tuple t : tuples) {
@@ -399,7 +419,7 @@ public class StackTester {
 				double value = ((Number)param).doubleValue();
 				inst.push(ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putDouble(value).array());
 			}
-			else if(op == StackOperation.UNIT_TESTS) {
+			else if (op == StackOperation.UNIT_TESTS) {
 				try {
 					inst.context.db.options().setLocationCacheSize(100001);
 					inst.context.db.run(tr -> {
@@ -425,6 +445,25 @@ public class StackTester {
 							}
 						}
 
+						Database db = tr.getDatabase();
+						db.options().setLocationCacheSize(100001);
+						db.options().setMaxWatches(10001);
+						db.options().setDatacenterId("dc_id");
+						db.options().setMachineId("machine_id");
+						db.options().setSnapshotRywEnable();
+						db.options().setSnapshotRywDisable();
+						db.options().setTransactionLoggingMaxFieldLength(1000);
+						db.options().setTransactionTimeout(100000);
+						db.options().setTransactionTimeout(0);
+						db.options().setTransactionMaxRetryDelay(100);
+						db.options().setTransactionRetryLimit(10);
+						db.options().setTransactionRetryLimit(-1);
+						db.options().setTransactionCausalReadRisky();
+						db.options().setTransactionIncludePortInAddress();
+						db.options().setTransactionUsedDuringCommitProtectionDisable();
+						db.options().setTransactionBypassUnreadable();
+						db.options().setTransactionReportConflictingKeys();
+
 						tr.options().setPrioritySystemImmediate();
 						tr.options().setPriorityBatch();
 						tr.options().setCausalReadRisky();
@@ -432,13 +471,18 @@ public class StackTester {
 						tr.options().setReadYourWritesDisable();
 						tr.options().setReadSystemKeys();
 						tr.options().setAccessSystemKeys();
+						tr.options().setTransactionLoggingMaxFieldLength(1000);
 						tr.options().setTimeout(60*1000);
 						tr.options().setRetryLimit(50);
 						tr.options().setMaxRetryDelay(100);
 						tr.options().setUsedDuringCommitProtectionDisable();
-						tr.options().setTransactionLoggingEnable("my_transaction");
+						tr.options().setDebugTransactionIdentifier("my_transaction");
+						tr.options().setLogTransaction();
 						tr.options().setReadLockAware();
 						tr.options().setLockAware();
+						tr.options().setIncludePortInAddress();
+						tr.options().setReportConflictingKeys();
+						tr.options().setBypassUnreadable();
 
 						if(!(new FDBException("Fake", 1020)).isRetryable() ||
 								(new FDBException("Fake", 10)).isRetryable())
@@ -457,7 +501,7 @@ public class StackTester {
 					throw new RuntimeException("Unit tests failed: " + e.getMessage());
 				}
 			}
-			else if(op == StackOperation.LOG_STACK) {
+			else if (op == StackOperation.LOG_STACK) {
 				List<Object> params = inst.popParams(1).join();
 				byte[] prefix = (byte[]) params.get(0);
 
@@ -520,18 +564,15 @@ public class StackTester {
 
 		@Override
 		void executeOperations() {
-			KeySelector begin = nextKey;
 			while(true) {
-				Transaction t = db.createTransaction();
-				List<KeyValue> keyValues = t.getRange(begin, endKey/*, 1000*/).asList().join();
-				t.close();
+				List<KeyValue> keyValues = db.read(readTr -> readTr.getRange(nextKey, endKey/*, 1000*/).asList().join());
 				if(keyValues.size() == 0) {
 					break;
 				}
 				//System.out.println(" * Got " + keyValues.size() + " instructions");
 
 				for(KeyValue next : keyValues) {
-					begin = KeySelector.firstGreaterThan(next.getKey());
+					nextKey = KeySelector.firstGreaterThan(next.getKey());
 					processOp(next.getValue());
 					instructionIndex++;
 				}
@@ -620,9 +661,10 @@ public class StackTester {
 					}
 				}
 				catch(FDBException e) {
-					Transaction tr = db.createTransaction();
-					tr.onError(e).join();
-					return false;
+					try(Transaction tr = db.createTransaction()) {
+						tr.onError(e).join();
+						return false;
+					}
 				}
 			}
 		}

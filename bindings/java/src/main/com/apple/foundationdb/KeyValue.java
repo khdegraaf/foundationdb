@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@
  */
 
 package com.apple.foundationdb;
+
+import com.apple.foundationdb.tuple.ByteArrayUtil;
 
 import java.util.Arrays;
 
@@ -76,5 +78,14 @@ public class KeyValue {
 	@Override
 	public int hashCode() {
 		return 17 + (37 * Arrays.hashCode(key) + Arrays.hashCode(value));
+	}
+
+	@Override
+	public String toString() {
+		final StringBuilder sb = new StringBuilder("KeyValue{");
+		sb.append("key=").append(ByteArrayUtil.printable(key));
+		sb.append(", value=").append(ByteArrayUtil.printable(value));
+		sb.append('}');
+		return sb.toString();
 	}
 }

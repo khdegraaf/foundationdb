@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,15 +27,17 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.apple.foundationdb.tuple.ByteArrayUtil;
+
 /**
  * The starting point for accessing FoundationDB.
  *  <br>
- *  <h3>Setting API version</h3>
+ *  <h2>Setting API version</h2>
  *  The FoundationDB API is accessed with a call to {@link #selectAPIVersion(int)}.
  *   This call is required before using any other part of the API. The call allows
  *   an error to be thrown at this point to prevent client code from accessing a later library
- *   with incorrect assumptions from the current version. The API version documented here is version
- *   {@code 610}.<br><br>
+ *   with incorrect assumptions from the current version. The latest supported API version
+ *   is defined as ApiVersion.LATEST.<br><br>
  *  FoundationDB encapsulates multiple versions of its interface by requiring
  *   the client to explicitly specify the version of the API it uses. The purpose
  *   of this design is to allow you to upgrade the server, client libraries, or
@@ -49,11 +51,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   being used to connect to the cluster. In particular, you should not advance
  *   the API version of your application after upgrading your client until the 
  *   cluster has also been upgraded.<br>
- *  <h3>Getting a database</h3>
+ *  <h2>Getting a database</h2>
  *  Once the API version has been set, the easiest way to get a {@link Database} object to use is
  *   to call {@link #open}.
  *  <br>
- *  <h3>Client networking</h3>
+ *  <h2>Client networking</h2>
  *  The network is started either implicitly with a call to a variant of {@link #open()}
  *  or started explicitly with a call to {@link #startNetwork()}.
  *  <br>
@@ -85,6 +87,10 @@ public class FDB {
 	private volatile boolean netStarted = false;
 	private volatile boolean netStopped = false;
 	volatile boolean warnOnUnclosed = true;
+	private boolean enableDirectBufferQueries = false;
+
+	private boolean useShutdownHook = true;
+	private Thread shutdownHook;
 	private final Semaphore netRunning = new Semaphore(1);
 	private final NetworkOptions options;
 
@@ -105,9 +111,7 @@ public class FDB {
 	 */
 	private FDB(int apiVersion) {
 		this.apiVersion = apiVersion;
-
 		options = new NetworkOptions(this::Network_setOption);
-		Runtime.getRuntime().addShutdownHook(new Thread(this::stopNetwork));
 	}
 
 	/**
@@ -162,16 +166,16 @@ public class FDB {
 	 *  object.<br><br>
 	 *
 	 *  Warning: When using the multi-version client API, setting an API version that
-	 *   is not supported by a particular client library will prevent that client from 
+	 *   is not supported by a particular client library will prevent that client from
 	 *   being used to connect to the cluster. In particular, you should not advance
-	 *   the API version of your application after upgrading your client until the 
+	 *   the API version of your application after upgrading your client until the
 	 *   cluster has also been upgraded.
 	 *
 	 * @param version the API version required
 	 *
 	 * @return the FoundationDB API object
 	 */
-	public static synchronized FDB selectAPIVersion(final int version) throws FDBException {
+	public static FDB selectAPIVersion(final int version) throws FDBException {
 		if(singleton != null) {
 			if(version != singleton.getAPIVersion()) {
 				throw new IllegalArgumentException(
@@ -181,13 +185,30 @@ public class FDB {
 		}
 		if(version < 510)
 			throw new IllegalArgumentException("API version not supported (minimum 510)");
-		if(version > 610)
-			throw new IllegalArgumentException("API version not supported (maximum 610)");
+		if(version > ApiVersion.LATEST)
+			throw new IllegalArgumentException(String.format("API version not supported (maximum %d)", ApiVersion.LATEST));
 
 		Select_API_version(version);
-		FDB fdb = new FDB(version);
+		singleton = new FDB(version);
 
-		return singleton = fdb;
+		return singleton;
+	}
+
+	/**
+	 * Disables shutdown hook that stops network thread upon process shutdown. This is useful if you need to run
+	 * your own shutdown hook that uses the FDB instance and you need to avoid race conditions
+	 * with the default shutdown hook. Replacement shutdown hook should stop the network thread manually
+	 * by calling {@link #stopNetwork}.
+	 */
+	public synchronized void disableShutdownHook() {
+		useShutdownHook = false;
+		if(shutdownHook != null) {
+			// If this method was called after network thread started and shutdown hook was installed,
+			// remove this hook
+			Runtime.getRuntime().removeShutdownHook(shutdownHook);
+			// Release thread reference for GC
+			shutdownHook = null;
+		}
 	}
 
 	/**
@@ -210,6 +231,35 @@ public class FDB {
 	 */
 	public int getAPIVersion() {
 		return apiVersion;
+	}
+
+	/**
+	 * Enables or disables use of DirectByteBuffers for getRange() queries.
+	 *
+	 *	@param enabled Whether DirectByteBuffer should be used for getRange() queries.
+	 */
+	public void enableDirectBufferQuery(boolean enabled) {
+		enableDirectBufferQueries = enabled;
+	}
+
+	/**
+	 * Determines whether {@code getRange()} queries can use {@code DirectByteBuffer} from
+	 * {@link DirectBufferPool} to copy results.
+	 *
+	 * @return {@code true} if direct buffer queries have been enabled and {@code false} otherwise
+	 */
+	public boolean isDirectBufferQueriesEnabled() {
+		return enableDirectBufferQueries;
+	}
+
+	/**
+	 * Resizes the DirectBufferPool with given parameters, which is used by getRange() requests.
+	 *
+	 * @param poolSize Number of buffers in pool
+	 * @param bufferSize Size of each buffer in bytes
+	 */
+	public void resizeDirectBufferPool(int poolSize, int bufferSize) {
+		DirectBufferPool.getInstance().resize(poolSize, bufferSize);
 	}
 
 	/**
@@ -280,9 +330,14 @@ public class FDB {
 	}
 
 	/**
-	 * Initializes networking, connects with the
-	 *  <a href="/foundationdb/administration.html#default-cluster-file" target="_blank">default fdb.cluster file</a>,
-	 *  and opens the database.
+	 * Initializes networking if required and connects to the cluster specified by the
+	 *  <a href="/foundationdb/administration.html#default-cluster-file" target="_blank">default fdb.cluster file</a>.<br>
+	 *  <br>
+	 *  A single client can use this function multiple times to connect to different
+	 *  clusters simultaneously, with each invocation requiring its own cluster file.
+	 *  To connect to multiple clusters running at different, incompatible versions,
+	 *  the <a href="/foundationdb/api-general.html#multi-version-client-api" target="_blank">multi-version client API</a>
+	 *  must be used.
 	 *
 	 * @return a {@code CompletableFuture} that will be set to a FoundationDB {@link Database}
 	 */
@@ -291,8 +346,13 @@ public class FDB {
 	}
 
 	/**
-	 * Initializes networking, connects to the cluster specified by {@code clusterFilePath}
-	 *  and opens the database.
+	 * Initializes networking if required and connects to the cluster specified by {@code clusterFilePath}.<br>
+	 *  <br>
+	 *  A single client can use this function multiple times to connect to different
+	 *  clusters simultaneously, with each invocation requiring its own cluster file.
+	 *  To connect to multiple clusters running at different, incompatible versions,
+	 *  the <a href="/foundationdb/api-general.html#multi-version-client-api" target="_blank">multi-version client API</a>
+	 *  must be used.
 	 *
 	 * @param clusterFilePath the
 	 *  <a href="/foundationdb/administration.html#foundationdb-cluster-file" target="_blank">cluster file</a>
@@ -307,8 +367,35 @@ public class FDB {
 	}
 
 	/**
-	 * Initializes networking, connects to the cluster specified by {@code clusterFilePath}
-	 *  and opens the database.
+	 * Initializes networking if required and connects to the cluster specified by {@code clusterFilePath}.<br>
+	 *  <br>
+	 *  A single client can use this function multiple times to connect to different
+	 *  clusters simultaneously, with each invocation requiring its own cluster file.
+	 *  To connect to multiple clusters running at different, incompatible versions,
+	 *  the <a href="/foundationdb/api-general.html#multi-version-client-api" target="_blank">multi-version client API</a>
+	 *  must be used.
+	 *
+	 * @param clusterFilePath the
+	 *  <a href="/foundationdb/administration.html#foundationdb-cluster-file" target="_blank">cluster file</a>
+	 *  defining the FoundationDB cluster. This can be {@code null} if the
+	 *  <a href="/foundationdb/administration.html#default-cluster-file" target="_blank">default fdb.cluster file</a>
+	 *  is to be used.
+	 * @param eventKeeper the EventKeeper to use for instrumentation calls, or {@code null} if no instrumentation is desired.
+	 *
+	 * @return a {@code CompletableFuture} that will be set to a FoundationDB {@link Database}
+	 */
+	public Database open(String clusterFilePath, EventKeeper eventKeeper) throws FDBException {
+		return open(clusterFilePath, DEFAULT_EXECUTOR, eventKeeper);
+	}
+
+	/**
+	 * Initializes networking if required and connects to the cluster specified by {@code clusterFilePath}.<br>
+	 *  <br>
+	 *  A single client can use this function multiple times to connect to different
+	 *  clusters simultaneously, with each invocation requiring its own cluster file.
+	 *  To connect to multiple clusters running at different, incompatible versions,
+	 *  the <a href="/foundationdb/api-general.html#multi-version-client-api" target="_blank">multi-version client API</a>
+	 *  must be used.
 	 *
 	 * @param clusterFilePath the
 	 *  <a href="/foundationdb/administration.html#foundationdb-cluster-file" target="_blank">cluster file</a>
@@ -320,13 +407,37 @@ public class FDB {
 	 * @return a {@code CompletableFuture} that will be set to a FoundationDB {@link Database}
 	 */
 	public Database open(String clusterFilePath, Executor e) throws FDBException {
+		return open(clusterFilePath, e, null);
+	}
+
+	/**
+	 * Initializes networking if required and connects to the cluster specified by {@code clusterFilePath}.<br>
+	 *  <br>
+	 *  A single client can use this function multiple times to connect to different
+	 *  clusters simultaneously, with each invocation requiring its own cluster file.
+	 *  To connect to multiple clusters running at different, incompatible versions,
+	 *  the <a href="/foundationdb/api-general.html#multi-version-client-api" target="_blank">multi-version client API</a>
+	 *  must be used.
+	 *
+	 * @param clusterFilePath the
+	 *  <a href="/foundationdb/administration.html#foundationdb-cluster-file" target="_blank">cluster file</a>
+	 *  defining the FoundationDB cluster. This can be {@code null} if the
+	 *  <a href="/foundationdb/administration.html#default-cluster-file" target="_blank">default fdb.cluster file</a>
+	 *  is to be used.
+	 * @param e the {@link Executor} to use to execute asynchronous callbacks
+	 * @param eventKeeper the {@link EventKeeper} to use to record instrumentation metrics, or {@code null} if no 
+	 *  instrumentation is desired.
+	 *
+	 * @return a {@code CompletableFuture} that will be set to a FoundationDB {@link Database}
+	 */
+	public Database open(String clusterFilePath, Executor e, EventKeeper eventKeeper) throws FDBException {
 		synchronized(this) {
 			if(!isConnected()) {
 				startNetwork();
 			}
 		}
 
-		return new FDBDatabase(Database_create(clusterFilePath), e);
+		return new FDBDatabase(Database_create(clusterFilePath), e, eventKeeper);
 	}
 
 	/**
@@ -377,6 +488,11 @@ public class FDB {
 			throw new IllegalStateException("Network has been stopped and cannot be restarted");
 		if(netStarted) {
 			return;
+		}
+		if(useShutdownHook) {
+			// Register shutdown hook that stops network thread if user did not opt out
+			shutdownHook = new Thread(this::stopNetwork, "fdb-shutdown-hook");
+			Runtime.getRuntime().addShutdownHook(shutdownHook);
 		}
 		Network_setup();
 		netStarted = true;
@@ -456,7 +572,7 @@ public class FDB {
 
 	protected static boolean evalErrorPredicate(int predicate, int code) {
 		if(singleton == null)
-			throw new IllegalStateException("FDB API not yet initalized");
+			throw new IllegalStateException("FDB API not yet initialized");
 		return singleton.Error_predicate(predicate, code);
 	}
 

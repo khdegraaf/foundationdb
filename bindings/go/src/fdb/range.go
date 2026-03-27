@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,12 +21,6 @@
 // FoundationDB Go API
 
 package fdb
-
-/*
- #define FDB_API_VERSION 610
- #include <foundationdb/fdb_c.h>
-*/
-import "C"
 
 import (
 	"fmt"
@@ -56,7 +50,8 @@ type RangeOptions struct {
 	// Reverse indicates that the read should be performed in lexicographic
 	// (false) or reverse lexicographic (true) order. When Reverse is true and
 	// Limit is non-zero, the last Limit key-value pairs in the range are
-	// returned.
+	// returned. Reading ranges in reverse is supported natively by the
+	// database and should have minimal extra cost.
 	Reverse bool
 }
 
@@ -166,9 +161,9 @@ func (rr RangeResult) GetSliceWithError() ([]KeyValue, error) {
 // complete. The current goroutine will be blocked until all reads have
 // completed.
 func (rr RangeResult) GetSliceOrPanic() []KeyValue {
-	kvs, e := rr.GetSliceWithError()
-	if e != nil {
-		panic(e)
+	kvs, err := rr.GetSliceWithError()
+	if err != nil {
+		panic(err)
 	}
 	return kvs
 }
@@ -261,9 +256,9 @@ func (ri *RangeIterator) fetchNextBatch() {
 // asynchronous operations associated with this range did not successfully
 // complete. The Advance method of this RangeIterator must have returned true
 // prior to calling Get.
-func (ri *RangeIterator) Get() (kv KeyValue, e error) {
+func (ri *RangeIterator) Get() (kv KeyValue, err error) {
 	if ri.err != nil {
-		e = ri.err
+		err = ri.err
 		return
 	}
 
@@ -283,9 +278,9 @@ func (ri *RangeIterator) Get() (kv KeyValue, e error) {
 // complete. The Advance method of this RangeIterator must have returned true
 // prior to calling MustGet.
 func (ri *RangeIterator) MustGet() KeyValue {
-	kv, e := ri.Get()
-	if e != nil {
-		panic(e)
+	kv, err := ri.Get()
+	if err != nil {
+		panic(err)
 	}
 	return kv
 }
@@ -315,9 +310,9 @@ func Strinc(prefix []byte) ([]byte, error) {
 func PrefixRange(prefix []byte) (KeyRange, error) {
 	begin := make([]byte, len(prefix))
 	copy(begin, prefix)
-	end, e := Strinc(begin)
-	if e != nil {
-		return KeyRange{}, e
+	end, err := Strinc(begin)
+	if err != nil {
+		return KeyRange{}, err
 	}
 	return KeyRange{Key(begin), Key(end)}, nil
 }

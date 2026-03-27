@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ import com.apple.foundationdb.Database;
 import com.apple.foundationdb.FDB;
 
 public abstract class AbstractTester {
-	public static final int API_VERSION = 610;
 	protected static final int NUM_RUNS = 25;
 	protected static final Charset ASCII = Charset.forName("ASCII");
 
@@ -79,7 +78,7 @@ public abstract class AbstractTester {
 		args = TesterArgs.parseArgs(argStrings);
 		if (args == null) return;
 
-		fdb = FDB.selectAPIVersion(API_VERSION);
+		fdb = FDB.selectAPIVersion(TestApiVersion.CURRENT);
 
 		// Validate argument combinations and set options.
 		if (!args.useMultiversionApi()) {

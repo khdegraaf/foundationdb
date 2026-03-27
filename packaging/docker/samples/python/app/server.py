@@ -2,7 +2,7 @@
 #
 # This source file is part of the FoundationDB open source project
 #
-# Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+# Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,15 +17,18 @@
 # limitations under the License.
 #
 
+import os
 from flask import Flask
 import fdb
 
 app = Flask(__name__)
 
-fdb.api_version(510)
-db=fdb.open()
+fdb.api_version(int(os.getenv("FDB_API_VERSION")))
+db = fdb.open()
 
-COUNTER_KEY=fdb.tuple.pack(('counter',))
+COUNTER_KEY = fdb.tuple.pack(("counter",))
+
+
 def _increment_counter(tr):
     counter_value = tr[COUNTER_KEY]
     if counter_value == None:
@@ -35,14 +38,16 @@ def _increment_counter(tr):
     tr[COUNTER_KEY] = fdb.tuple.pack((counter,))
     return counter
 
-@app.route("/counter", methods=['GET'])
+
+@app.route("/counter", methods=["GET"])
 def get_counter():
     counter_value = db[COUNTER_KEY]
     if counter_value == None:
-        return '0'
-    else:
-        return str(fdb.tuple.unpack(counter_value)[0])
+        return "0"
 
-@app.route("/counter/increment", methods=['POST'])
+    return str(fdb.tuple.unpack(counter_value)[0])
+
+
+@app.route("/counter/increment", methods=["POST"])
 def increment_counter():
     return str(_increment_counter(db))

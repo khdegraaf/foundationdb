@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,10 +39,10 @@ TEST_CASE("/flow/Deque/12345") {
 
 TEST_CASE("/flow/Deque/queue") {
 	std::queue<int, Deque<int>> q;
-	
+
 	int to_push = 0, to_pop = 0;
 	while (to_pop != 1000) {
-		if (to_push != 1000 && (q.empty() || g_random->random01() < 0.55)) {
+		if (to_push != 1000 && (q.empty() || deterministicRandom()->random01() < 0.55)) {
 			q.push(to_push++);
 		} else {
 			ASSERT(q.front() == to_pop++);
@@ -55,7 +55,6 @@ TEST_CASE("/flow/Deque/queue") {
 
 TEST_CASE("/flow/Deque/max_size") {
 	Deque<uint8_t> q;
-	double begin = timer();
 	for (int i = 0; i < 10; i++)
 		q.push_back(i);
 	q.pop_front();
@@ -74,11 +73,47 @@ TEST_CASE("/flow/Deque/max_size") {
 	try {
 		q.push_back(1);
 		ASSERT(false);
+	} catch (std::bad_alloc&) {
 	}
-	catch (std::bad_alloc&) {}
 
 	return Void();
 }
 
+struct RandomlyThrows {
+	int data = 0;
+	RandomlyThrows() = default;
+	explicit RandomlyThrows(int data) : data(data) {}
+	~RandomlyThrows() = default;
+	RandomlyThrows(const RandomlyThrows& other) : data(other.data) { randomlyThrow(); }
+	RandomlyThrows& operator=(const RandomlyThrows& other) {
+		data = other.data;
+		randomlyThrow();
+		return *this;
+	}
+
+private:
+	void randomlyThrow() {
+		if (deterministicRandom()->random01() < 0.1) {
+			throw success();
+		}
+	}
+};
+
+TEST_CASE("/flow/Deque/grow_exception_safety") {
+	Deque<RandomlyThrows> q;
+	for (int i = 0; i < 100; ++i) {
+		loop {
+			try {
+				q.push_back(RandomlyThrows{ i });
+				break;
+			} catch (Error& e) {
+			}
+		}
+	}
+	for (int i = 0; i < 100; ++i) {
+		ASSERT(q[i].data == i);
+	}
+	return Void();
+}
 
 void forceLinkDequeTests() {}

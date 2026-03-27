@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -165,9 +165,13 @@ public class KeySelector {
 	}
 
 	/**
-	 * Returns the {@code or-equal} parameter of this {@code KeySelector}. For internal use.
+	 * Returns the orEqual parameter for this {@code KeySelector}. See the
+	 * {@link #KeySelector(byte[], boolean, int)} KeySelector constructor}
+	 * for more details.
+	 *
+	 * @return the {@code or-equal} parameter of this {@code KeySelector}.
 	 */
-	boolean orEqual() {
+	public boolean orEqual() {
 		return orEqual;
 	}
 

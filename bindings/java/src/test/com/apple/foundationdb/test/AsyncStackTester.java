@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
@@ -38,6 +39,7 @@ import com.apple.foundationdb.FDB;
 import com.apple.foundationdb.FDBException;
 import com.apple.foundationdb.KeySelector;
 import com.apple.foundationdb.KeyValue;
+import com.apple.foundationdb.KeyArrayResult;
 import com.apple.foundationdb.MutationType;
 import com.apple.foundationdb.Range;
 import com.apple.foundationdb.StreamingMode;
@@ -45,6 +47,7 @@ import com.apple.foundationdb.Transaction;
 import com.apple.foundationdb.async.AsyncUtil;
 import com.apple.foundationdb.tuple.ByteArrayUtil;
 import com.apple.foundationdb.tuple.Tuple;
+import com.apple.foundationdb.async.CloseableAsyncIterator;
 
 public class AsyncStackTester {
 	static final String DIRECTORY_PREFIX = "DIRECTORY_";
@@ -183,7 +186,7 @@ public class AsyncStackTester {
 			return AsyncUtil.DONE;
 		}
 		else if(op == StackOperation.RESET) {
-			inst.context.newTransaction();
+			inst.context.resetTransaction();
 			return AsyncUtil.DONE;
 		}
 		else if(op == StackOperation.CANCEL) {
@@ -222,6 +225,18 @@ public class AsyncStackTester {
 			return inst.popParam().thenAcceptAsync(param -> {
 				inst.push(inst.readTcx.readAsync(readTr -> readTr.get((byte[]) param)));
 			});
+		}
+		else if (op == StackOperation.GET_ESTIMATED_RANGE_SIZE) {
+			List<Object> params = inst.popParams(2).join();
+			return inst.readTr.getEstimatedRangeSizeBytes((byte[])params.get(0), (byte[])params.get(1)).thenAcceptAsync(size -> {
+				inst.push("GOT_ESTIMATED_RANGE_SIZE".getBytes());
+			}, FDB.DEFAULT_EXECUTOR);
+		}
+		else if (op == StackOperation.GET_RANGE_SPLIT_POINTS) {
+			List<Object> params = inst.popParams(3).join();
+			return inst.readTr.getRangeSplitPoints((byte[])params.get(0), (byte[])params.get(1), (long)params.get(2)).thenAcceptAsync(splitPoints -> {
+				inst.push("GOT_RANGE_SPLIT_POINTS".getBytes());
+			}, FDB.DEFAULT_EXECUTOR);
 		}
 		else if(op == StackOperation.GET_RANGE) {
 			return inst.popParams(5).thenComposeAsync(params -> {
@@ -282,6 +297,11 @@ public class AsyncStackTester {
 
 			return AsyncUtil.DONE;
 		}
+		else if(op == StackOperation.GET_APPROXIMATE_SIZE) {
+			return inst.tr.getApproximateSize().thenAcceptAsync(size -> {
+				inst.push("GOT_APPROXIMATE_SIZE".getBytes());
+			}, FDB.DEFAULT_EXECUTOR);
+		}
 		else if(op == StackOperation.GET_VERSIONSTAMP) {
 			try {
 				inst.push(inst.tr.getVersionstamp());
@@ -314,9 +334,9 @@ public class AsyncStackTester {
 				final Transaction oldTr = inst.tr;
 				CompletableFuture<Void> f = oldTr.onError(err).whenComplete((tr, t) -> {
 					if(t != null) {
-						inst.context.newTransaction(oldTr); // Other bindings allow reuse of non-retryable transactions, so we need to emulate that behavior.
+						inst.context.resetTransaction(oldTr); // Other bindings allow reuse of non-retryable transactions, so we need to emulate that behavior.
 					}
-					else if(!inst.setTransaction(oldTr, tr)) {
+					else if(!inst.replaceTransaction(oldTr, tr)) {
 						tr.close();
 					}
 				}).thenApply(v -> null);
@@ -412,7 +432,11 @@ public class AsyncStackTester {
 				return inst.popParams(listSize).thenAcceptAsync(rawElements -> {
 					List<Tuple> tuples = new ArrayList<>(listSize);
 					for(Object o : rawElements) {
-						tuples.add(Tuple.fromBytes((byte[])o));
+						// Unpacking a tuple keeps around the serialized representation and uses
+						// it for comparison if it's available. To test semantic comparison, recreate
+						// the tuple from the item list.
+						Tuple t = Tuple.fromBytes((byte[])o);
+						tuples.add(Tuple.fromList(t.getItems()));
 					}
 					Collections.sort(tuples);
 					for(Tuple t : tuples) {
@@ -447,7 +471,7 @@ public class AsyncStackTester {
 				inst.push(ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putDouble(value).array());
 			}, FDB.DEFAULT_EXECUTOR);
 		}
-		else if(op == StackOperation.UNIT_TESTS) {
+		else if (op == StackOperation.UNIT_TESTS) {
 			inst.context.db.options().setLocationCacheSize(100001);
 			return inst.context.db.runAsync(tr -> {
 				FDB fdb = FDB.instance();
@@ -471,6 +495,32 @@ public class AsyncStackTester {
 						throw e;
 					}
 				}
+
+				Database db = tr.getDatabase();
+				db.options().setLocationCacheSize(100001);
+				db.options().setMaxWatches(10001);
+				db.options().setDatacenterId("dc_id");
+				db.options().setMachineId("machine_id");
+				db.options().setSnapshotRywEnable();
+				db.options().setSnapshotRywDisable();
+				db.options().setTransactionLoggingMaxFieldLength(1000);
+				db.options().setTransactionTimeout(100000);
+				db.options().setTransactionTimeout(0);
+				db.options().setTransactionMaxRetryDelay(100);
+				db.options().setTransactionRetryLimit(10);
+				db.options().setTransactionRetryLimit(-1);
+				db.options().setTransactionCausalReadRisky();
+				db.options().setTransactionIncludePortInAddress();
+				db.options().setTransactionUsedDuringCommitProtectionDisable();
+				db.options().setTransactionBypassUnreadable();
+				db.options().setTransactionReportConflictingKeys();
+
+				// Test network busyness
+				double busyness = db.getMainThreadBusyness();
+				if (busyness < 0) {
+					throw new IllegalStateException("Network busyness cannot be less than 0");
+				}
+
 				tr.options().setPrioritySystemImmediate();
 				tr.options().setPriorityBatch();
 				tr.options().setCausalReadRisky();
@@ -478,13 +528,18 @@ public class AsyncStackTester {
 				tr.options().setReadYourWritesDisable();
 				tr.options().setReadSystemKeys();
 				tr.options().setAccessSystemKeys();
+				tr.options().setTransactionLoggingMaxFieldLength(1000);
 				tr.options().setTimeout(60*1000);
 				tr.options().setRetryLimit(50);
 				tr.options().setMaxRetryDelay(100);
 				tr.options().setUsedDuringCommitProtectionDisable();
-				tr.options().setTransactionLoggingEnable("my_transaction");
+				tr.options().setDebugTransactionIdentifier("my_transaction");
+				tr.options().setLogTransaction();
 				tr.options().setReadLockAware();
 				tr.options().setLockAware();
+				tr.options().setIncludePortInAddress();
+				tr.options().setReportConflictingKeys();
+				tr.options().setBypassUnreadable();
 
 				if(!(new FDBException("Fake", 1020)).isRetryable() ||
 						(new FDBException("Fake", 10)).isRetryable())
@@ -496,7 +551,7 @@ public class AsyncStackTester {
 				throw new RuntimeException("Unit tests failed: " + t.getMessage());
 			});
 		}
-		else if(op == StackOperation.LOG_STACK) {
+		else if (op == StackOperation.LOG_STACK) {
 			return inst.popParam().thenComposeAsync(prefix -> doLogStack(inst, (byte[])prefix), FDB.DEFAULT_EXECUTOR);
 		}
 
@@ -638,10 +693,7 @@ public class AsyncStackTester {
 			};
 
 			if(operations == null || ++currentOp == operations.size()) {
-				Transaction tr = db.createTransaction();
-
-				return tr.getRange(nextKey, endKey, 1000).asList()
-				.whenComplete((x, t) -> tr.close())
+				return db.readAsync(readTr -> readTr.getRange(nextKey, endKey, 1000).asList())
 				.thenComposeAsync(next -> {
 					if(next.size() < 1) {
 						//System.out.println("No key found after: " + ByteArrayUtil.printable(nextKey.getKey()));
@@ -728,10 +780,6 @@ public class AsyncStackTester {
 		//System.out.println("Starting test...");
 		c.run();
 		//System.out.println("Done with test.");
-
-		/*byte[] key = Tuple.from("test_results".getBytes(), 5).pack();
-		byte[] bs = db.createTransaction().get(key).get();
-		System.out.println("output of " + ByteArrayUtil.printable(key) + " as: " + ByteArrayUtil.printable(bs));*/
 
 		db.close();
 		System.gc();

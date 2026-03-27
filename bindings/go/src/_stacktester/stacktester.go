@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,8 +25,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	"log"
 	"math/big"
 	"os"
@@ -37,6 +35,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 )
 
 const verbose bool = false
@@ -104,7 +105,7 @@ func (sm *StackMachine) waitAndPop() (ret stackEntry) {
 	switch el := ret.item.(type) {
 	case []byte:
 		ret.item = el
-	case int64, uint64, *big.Int, string, bool, tuple.UUID, float32, float64, tuple.Tuple:
+	case int64, uint64, *big.Int, string, bool, tuple.UUID, float32, float64, tuple.Tuple, tuple.Versionstamp:
 		ret.item = el
 	case fdb.Key:
 		ret.item = []byte(el)
@@ -143,9 +144,9 @@ func (sm *StackMachine) popRangeOptions() fdb.RangeOptions {
 }
 
 func (sm *StackMachine) popPrefixRange() fdb.ExactRange {
-	er, e := fdb.PrefixRange(sm.waitAndPop().item.([]byte))
-	if e != nil {
-		panic(e)
+	er, err := fdb.PrefixRange(sm.waitAndPop().item.([]byte))
+	if err != nil {
+		panic(err)
 	}
 	return er
 }
@@ -194,7 +195,7 @@ func tupleToString(t tuple.Tuple) string {
 		case tuple.Tuple:
 			buffer.WriteString(tupleToString(el))
 		default:
-			log.Fatalf("Don't know how to stringify tuple elemement %v %T\n", el, el)
+			log.Fatalf("Don't know how to stringify tuple element %v %T\n", el, el)
 		}
 	}
 	buffer.WriteByte(')')
@@ -242,9 +243,9 @@ func (sm *StackMachine) dumpStack() {
 }
 
 func (sm *StackMachine) executeMutation(t fdb.Transactor, f func(fdb.Transaction) (interface{}, error), isDB bool, idx int) {
-	_, e := t.Transact(f)
-	if e != nil {
-		panic(e)
+	_, err := t.Transact(f)
+	if err != nil {
+		panic(err)
 	}
 	if isDB {
 		sm.store(idx, []byte("RESULT_NOT_PRESENT"))
@@ -254,17 +255,17 @@ func (sm *StackMachine) executeMutation(t fdb.Transactor, f func(fdb.Transaction
 func (sm *StackMachine) checkWatches(watches [4]fdb.FutureNil, expected bool) bool {
 	for _, watch := range watches {
 		if watch.IsReady() || expected {
-			e := watch.Get()
-			if e != nil {
-				switch e := e.(type) {
+			err := watch.Get()
+			if err != nil {
+				switch err := err.(type) {
 				case fdb.Error:
 					tr, tr_error := db.CreateTransaction()
 					if tr_error != nil {
 						panic(tr_error)
 					}
-					tr.OnError(e).MustGet()
+					tr.OnError(err).MustGet()
 				default:
-					panic(e)
+					panic(err)
 				}
 			}
 			if !expected {
@@ -278,19 +279,19 @@ func (sm *StackMachine) checkWatches(watches [4]fdb.FutureNil, expected bool) bo
 
 func (sm *StackMachine) testWatches() {
 	for {
-		_, e := db.Transact(func(tr fdb.Transaction) (interface{}, error) {
+		_, err := db.Transact(func(tr fdb.Transaction) (interface{}, error) {
 			tr.Set(fdb.Key("w0"), []byte("0"))
 			tr.Set(fdb.Key("w2"), []byte("2"))
 			tr.Set(fdb.Key("w3"), []byte("3"))
 			return nil, nil
 		})
-		if e != nil {
-			panic(e)
+		if err != nil {
+			panic(err)
 		}
 
 		var watches [4]fdb.FutureNil
 
-		_, e = db.Transact(func(tr fdb.Transaction) (interface{}, error) {
+		_, err = db.Transact(func(tr fdb.Transaction) (interface{}, error) {
 			watches[0] = tr.Watch(fdb.Key("w0"))
 			watches[1] = tr.Watch(fdb.Key("w1"))
 			watches[2] = tr.Watch(fdb.Key("w2"))
@@ -300,8 +301,8 @@ func (sm *StackMachine) testWatches() {
 			tr.Clear(fdb.Key("w1"))
 			return nil, nil
 		})
-		if e != nil {
-			panic(e)
+		if err != nil {
+			panic(err)
 		}
 
 		time.Sleep(5 * time.Second)
@@ -310,15 +311,15 @@ func (sm *StackMachine) testWatches() {
 			continue
 		}
 
-		_, e = db.Transact(func(tr fdb.Transaction) (interface{}, error) {
+		_, err = db.Transact(func(tr fdb.Transaction) (interface{}, error) {
 			tr.Set(fdb.Key("w0"), []byte("a"))
 			tr.Set(fdb.Key("w1"), []byte("b"))
 			tr.Clear(fdb.Key("w2"))
 			tr.BitXor(fdb.Key("w3"), []byte("\xff\xff"))
 			return nil, nil
 		})
-		if e != nil {
-			panic(e)
+		if err != nil {
+			panic(err)
 		}
 
 		if sm.checkWatches(watches, true) {
@@ -328,12 +329,12 @@ func (sm *StackMachine) testWatches() {
 }
 
 func (sm *StackMachine) testLocality() {
-	_, e := db.Transact(func(tr fdb.Transaction) (interface{}, error) {
+	_, err := db.Transact(func(tr fdb.Transaction) (interface{}, error) {
 		tr.Options().SetTimeout(60 * 1000)
 		tr.Options().SetReadSystemKeys()
-		boundaryKeys, e := db.LocalityGetBoundaryKeys(fdb.KeyRange{fdb.Key(""), fdb.Key("\xff\xff")}, 0, 0)
-		if e != nil {
-			panic(e)
+		boundaryKeys, err := db.LocalityGetBoundaryKeys(fdb.KeyRange{fdb.Key(""), fdb.Key("\xff\xff")}, 0, 0)
+		if err != nil {
+			panic(err)
 		}
 
 		for i := 0; i < len(boundaryKeys)-1; i++ {
@@ -360,13 +361,13 @@ func (sm *StackMachine) testLocality() {
 		return nil, nil
 	})
 
-	if e != nil {
-		panic(e)
+	if err != nil {
+		panic(err)
 	}
 }
 
 func (sm *StackMachine) logStack(entries map[int]stackEntry, prefix []byte) {
-	_, e := db.Transact(func(tr fdb.Transaction) (interface{}, error) {
+	_, err := db.Transact(func(tr fdb.Transaction) (interface{}, error) {
 		for index, el := range entries {
 			var keyt tuple.Tuple
 			keyt = append(keyt, int64(index))
@@ -388,8 +389,8 @@ func (sm *StackMachine) logStack(entries map[int]stackEntry, prefix []byte) {
 		return nil, nil
 	})
 
-	if e != nil {
-		panic(e)
+	if err != nil {
+		panic(err)
 	}
 	return
 }
@@ -403,10 +404,10 @@ func (sm *StackMachine) currentTransaction() fdb.Transaction {
 }
 
 func (sm *StackMachine) newTransactionWithLockHeld() {
-	tr, e := db.CreateTransaction()
+	tr, err := db.CreateTransaction()
 
-	if e != nil {
-		panic(e)
+	if err != nil {
+		panic(err)
 	}
 
 	trMap[sm.trName] = tr
@@ -447,7 +448,7 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 		}
 	}()
 
-	var e error
+	var err error
 
 	op := inst[0].(string)
 	if sm.verbose {
@@ -530,13 +531,13 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 	case op == "ON_ERROR":
 		sm.store(idx, sm.currentTransaction().OnError(fdb.Error{int(sm.waitAndPop().item.(int64))}))
 	case op == "GET_READ_VERSION":
-		_, e = rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+		_, err = rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
 			sm.lastVersion = rtr.GetReadVersion().MustGet()
 			sm.store(idx, []byte("GOT_READ_VERSION"))
 			return nil, nil
 		})
-		if e != nil {
-			panic(e)
+		if err != nil {
+			panic(err)
 		}
 	case op == "SET":
 		key := fdb.Key(sm.waitAndPop().item.([]byte))
@@ -560,14 +561,35 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 		sm.logStack(entries, prefix)
 	case op == "GET":
 		key := fdb.Key(sm.waitAndPop().item.([]byte))
-		res, e := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+		res, err := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
 			return rtr.Get(key), nil
 		})
-		if e != nil {
-			panic(e)
+		if err != nil {
+			panic(err)
 		}
 
 		sm.store(idx, res.(fdb.FutureByteSlice))
+	case op == "GET_ESTIMATED_RANGE_SIZE":
+		r := sm.popKeyRange()
+		_, err := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+			_ = rtr.GetEstimatedRangeSizeBytes(r).MustGet()
+			sm.store(idx, []byte("GOT_ESTIMATED_RANGE_SIZE"))
+			return nil, nil
+		})
+		if err != nil {
+			panic(err)
+		}
+	case op == "GET_RANGE_SPLIT_POINTS":
+		r := sm.popKeyRange()
+		chunkSize := sm.waitAndPop().item.(int64)
+		_, err := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+			_ = rtr.GetRangeSplitPoints(r, chunkSize).MustGet()
+			sm.store(idx, []byte("GOT_RANGE_SPLIT_POINTS"))
+			return nil, nil
+		})
+		if err != nil {
+			panic(err)
+		}
 	case op == "COMMIT":
 		sm.store(idx, sm.currentTransaction().Commit())
 	case op == "RESET":
@@ -584,21 +606,24 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 		entry := sm.waitAndPop()
 		sm.store(entry.idx, entry.item)
 	case op == "GET_COMMITTED_VERSION":
-		sm.lastVersion, e = sm.currentTransaction().GetCommittedVersion()
-		if e != nil {
-			panic(e)
+		sm.lastVersion, err = sm.currentTransaction().GetCommittedVersion()
+		if err != nil {
+			panic(err)
 		}
 		sm.store(idx, []byte("GOT_COMMITTED_VERSION"))
+	case op == "GET_APPROXIMATE_SIZE":
+		_ = sm.currentTransaction().GetApproximateSize().MustGet()
+		sm.store(idx, []byte("GOT_APPROXIMATE_SIZE"))
 	case op == "GET_VERSIONSTAMP":
 		sm.store(idx, sm.currentTransaction().GetVersionstamp())
 	case op == "GET_KEY":
 		sel := sm.popSelector()
 		prefix := sm.waitAndPop().item.([]byte)
-		res, e := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+		res, err := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
 			return rtr.GetKey(sel).MustGet(), nil
 		})
-		if e != nil {
-			panic(e)
+		if err != nil {
+			panic(err)
 		}
 
 		key := res.(fdb.Key)
@@ -608,9 +633,9 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 		} else if bytes.Compare(key, prefix) < 0 {
 			sm.store(idx, prefix)
 		} else {
-			s, e := fdb.Strinc(prefix)
-			if e != nil {
-				panic(e)
+			s, err := fdb.Strinc(prefix)
+			if err != nil {
+				panic(err)
 			}
 			sm.store(idx, s)
 		}
@@ -632,11 +657,11 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 			prefix = sm.waitAndPop().item.([]byte)
 		}
 
-		res, e := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+		res, err := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
 			return rtr.GetRange(r, ro).GetSliceOrPanic(), nil
 		})
-		if e != nil {
-			panic(e)
+		if err != nil {
+			panic(err)
 		}
 
 		sm.pushRange(idx, res.([]fdb.KeyValue), prefix)
@@ -661,10 +686,28 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 			t = append(t, sm.waitAndPop().item)
 		}
 		sm.store(idx, []byte(t.Pack()))
+	case op == "TUPLE_PACK_WITH_VERSIONSTAMP":
+		var t tuple.Tuple
+
+		prefix := sm.waitAndPop().item.([]byte)
+		c := sm.waitAndPop().item.(int64)
+		for i := 0; i < int(c); i++ {
+			t = append(t, sm.waitAndPop().item)
+		}
+
+		packed, err := t.PackWithVersionstamp(prefix)
+		if err != nil && strings.Contains(err.Error(), "No incomplete") {
+			sm.store(idx, []byte("ERROR: NONE"))
+		} else if err != nil {
+			sm.store(idx, []byte("ERROR: MULTIPLE"))
+		} else {
+			sm.store(idx, []byte("OK"))
+			sm.store(idx, packed)
+		}
 	case op == "TUPLE_UNPACK":
-		t, e := tuple.Unpack(fdb.Key(sm.waitAndPop().item.([]byte)))
-		if e != nil {
-			panic(e)
+		t, err := tuple.Unpack(fdb.Key(sm.waitAndPop().item.([]byte)))
+		if err != nil {
+			panic(err)
 		}
 		for _, el := range t {
 			sm.store(idx, []byte(tuple.Tuple{el}.Pack()))
@@ -673,9 +716,9 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 		count := sm.waitAndPop().item.(int64)
 		tuples := make([]tuple.Tuple, count)
 		for i := 0; i < int(count); i++ {
-			tuples[i], e = tuple.Unpack(fdb.Key(sm.waitAndPop().item.([]byte)))
-			if e != nil {
-				panic(e)
+			tuples[i], err = tuple.Unpack(fdb.Key(sm.waitAndPop().item.([]byte)))
+			if err != nil {
+				panic(err)
 			}
 		}
 		sort.Sort(byBytes(tuples))
@@ -720,9 +763,9 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 		}()
 	case op == "WAIT_EMPTY":
 		prefix := sm.waitAndPop().item.([]byte)
-		er, e := fdb.PrefixRange(prefix)
-		if e != nil {
-			panic(e)
+		er, err := fdb.PrefixRange(prefix)
+		if err != nil {
+			panic(err)
 		}
 		db.Transact(func(tr fdb.Transaction) (interface{}, error) {
 			v := tr.GetRange(er, fdb.RangeOptions{}).GetSliceOrPanic()
@@ -733,27 +776,27 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 		})
 		sm.store(idx, []byte("WAITED_FOR_EMPTY"))
 	case op == "READ_CONFLICT_RANGE":
-		e = sm.currentTransaction().AddReadConflictRange(fdb.KeyRange{fdb.Key(sm.waitAndPop().item.([]byte)), fdb.Key(sm.waitAndPop().item.([]byte))})
-		if e != nil {
-			panic(e)
+		err = sm.currentTransaction().AddReadConflictRange(fdb.KeyRange{fdb.Key(sm.waitAndPop().item.([]byte)), fdb.Key(sm.waitAndPop().item.([]byte))})
+		if err != nil {
+			panic(err)
 		}
 		sm.store(idx, []byte("SET_CONFLICT_RANGE"))
 	case op == "WRITE_CONFLICT_RANGE":
-		e = sm.currentTransaction().AddWriteConflictRange(fdb.KeyRange{fdb.Key(sm.waitAndPop().item.([]byte)), fdb.Key(sm.waitAndPop().item.([]byte))})
-		if e != nil {
-			panic(e)
+		err = sm.currentTransaction().AddWriteConflictRange(fdb.KeyRange{fdb.Key(sm.waitAndPop().item.([]byte)), fdb.Key(sm.waitAndPop().item.([]byte))})
+		if err != nil {
+			panic(err)
 		}
 		sm.store(idx, []byte("SET_CONFLICT_RANGE"))
 	case op == "READ_CONFLICT_KEY":
-		e = sm.currentTransaction().AddReadConflictKey(fdb.Key(sm.waitAndPop().item.([]byte)))
-		if e != nil {
-			panic(e)
+		err = sm.currentTransaction().AddReadConflictKey(fdb.Key(sm.waitAndPop().item.([]byte)))
+		if err != nil {
+			panic(err)
 		}
 		sm.store(idx, []byte("SET_CONFLICT_KEY"))
 	case op == "WRITE_CONFLICT_KEY":
-		e = sm.currentTransaction().AddWriteConflictKey(fdb.Key(sm.waitAndPop().item.([]byte)))
-		if e != nil {
-			panic(e)
+		err = sm.currentTransaction().AddWriteConflictKey(fdb.Key(sm.waitAndPop().item.([]byte)))
+		if err != nil {
+			panic(err)
 		}
 		sm.store(idx, []byte("SET_CONFLICT_KEY"))
 	case op == "ATOMIC_OP":
@@ -772,6 +815,18 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 	case op == "UNIT_TESTS":
 		db.Options().SetLocationCacheSize(100001)
 		db.Options().SetMaxWatches(10001)
+		db.Options().SetDatacenterId("dc_id")
+		db.Options().SetMachineId("machine_id")
+		db.Options().SetSnapshotRywEnable()
+		db.Options().SetSnapshotRywDisable()
+		db.Options().SetTransactionLoggingMaxFieldLength(1000)
+		db.Options().SetTransactionTimeout(100000)
+		db.Options().SetTransactionTimeout(0)
+		db.Options().SetTransactionMaxRetryDelay(100)
+		db.Options().SetTransactionRetryLimit(10)
+		db.Options().SetTransactionRetryLimit(-1)
+		db.Options().SetTransactionCausalReadRisky()
+		db.Options().SetTransactionIncludePortInAddress()
 
 		if !fdb.IsAPIVersionSelected() {
 			log.Fatal("API version should be selected")
@@ -800,7 +855,7 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 		}
 		fdb.MustAPIVersion(apiVersion)
 
-		_, e := db.Transact(func(tr fdb.Transaction) (interface{}, error) {
+		_, err := db.Transact(func(tr fdb.Transaction) (interface{}, error) {
 			tr.Options().SetPrioritySystemImmediate()
 			tr.Options().SetPriorityBatch()
 			tr.Options().SetCausalReadRisky()
@@ -808,19 +863,22 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 			tr.Options().SetReadYourWritesDisable()
 			tr.Options().SetReadSystemKeys()
 			tr.Options().SetAccessSystemKeys()
+			tr.Options().SetTransactionLoggingMaxFieldLength(1000)
 			tr.Options().SetTimeout(60 * 1000)
 			tr.Options().SetRetryLimit(50)
 			tr.Options().SetMaxRetryDelay(100)
 			tr.Options().SetUsedDuringCommitProtectionDisable()
-			tr.Options().SetTransactionLoggingEnable("my_transaction")
+			tr.Options().SetDebugTransactionIdentifier("my_transaction")
+			tr.Options().SetLogTransaction()
 			tr.Options().SetReadLockAware()
 			tr.Options().SetLockAware()
+			tr.Options().SetIncludePortInAddress()
 
 			return tr.Get(fdb.Key("\xff")).MustGet(), nil
 		})
 
-		if e != nil {
-			panic(e)
+		if err != nil {
+			panic(err)
 		}
 
 		sm.testWatches()
@@ -842,11 +900,11 @@ func (sm *StackMachine) processInst(idx int, inst tuple.Tuple) {
 }
 
 func (sm *StackMachine) Run() {
-	r, e := db.Transact(func(tr fdb.Transaction) (interface{}, error) {
+	r, err := db.Transact(func(tr fdb.Transaction) (interface{}, error) {
 		return tr.GetRange(tuple.Tuple{sm.prefix}, fdb.RangeOptions{}).GetSliceOrPanic(), nil
 	})
-	if e != nil {
-		panic(e)
+	if err != nil {
+		panic(err)
 	}
 
 	instructions := r.([]fdb.KeyValue)
@@ -873,29 +931,29 @@ func main() {
 		clusterFile = os.Args[3]
 	}
 
-	var e error
+	var err error
 	var apiVersion int
 
-	apiVersion, e = strconv.Atoi(os.Args[2])
-	if e != nil {
-		log.Fatal(e)
+	apiVersion, err = strconv.Atoi(os.Args[2])
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	if fdb.IsAPIVersionSelected() {
 		log.Fatal("API version already selected")
 	}
 
-	e = fdb.APIVersion(apiVersion)
-	if e != nil {
-		log.Fatal(e)
+	err = fdb.APIVersion(apiVersion)
+	if err != nil {
+		log.Fatal(err)
 	}
 	if fdb.MustGetAPIVersion() != apiVersion {
 		log.Fatal("API version not equal to value selected")
 	}
 
-	db, e = fdb.OpenDatabase(clusterFile)
-	if e != nil {
-		log.Fatal(e)
+	db, err = fdb.OpenDatabase(clusterFile)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	sm := newStackMachine(prefix, verbose)

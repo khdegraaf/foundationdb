@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,12 +22,15 @@ package main
 
 import (
 	"fmt"
+	"log"
+
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
-	"log"
 )
+
+const API_VERSION int = 800
 
 type EmptyQueueError struct{}
 
@@ -52,7 +55,7 @@ func (q *Queue) NewQueue(ss subspace.Subspace) {
 }
 
 func (q *Queue) Dequeue(trtr fdb.Transactor) (interface{}, error) {
-	i, e := trtr.Transact(func(tr fdb.Transaction) (interface{}, error) {
+	i, err := trtr.Transact(func(tr fdb.Transaction) (interface{}, error) {
 		item, err := q.FirstItem(tr)
 		if err != nil {
 			return nil, err
@@ -60,11 +63,11 @@ func (q *Queue) Dequeue(trtr fdb.Transactor) (interface{}, error) {
 		tr.Clear(item.(fdb.KeyValue).Key)
 		return item.(fdb.KeyValue).Value, err
 	})
-	return i, e
+	return i, err
 }
 
 func (q *Queue) Enqueue(trtr fdb.Transactor, item interface{}) (interface{}, error) {
-	i, e := trtr.Transact(func(tr fdb.Transaction) (interface{}, error) {
+	i, err := trtr.Transact(func(tr fdb.Transaction) (interface{}, error) {
 		index, err := q.LastIndex(tr)
 		if err != nil {
 			return nil, err
@@ -79,7 +82,7 @@ func (q *Queue) Enqueue(trtr fdb.Transactor, item interface{}) (interface{}, err
 
 		return nil, nil
 	})
-	return i, e
+	return i, err
 }
 
 func (q *Queue) LastIndex(trtr fdb.Transactor) (interface{}, error) {
@@ -107,7 +110,7 @@ func (q *Queue) FirstItem(trtr fdb.Transactor) (interface{}, error) {
 func main() {
 	fmt.Println("Queue Example Program")
 
-	fdb.MustAPIVersion(610)
+	fdb.MustAPIVersion(API_VERSION)
 
 	db := fdb.MustOpenDefault()
 
@@ -126,9 +129,9 @@ func main() {
 	q.Enqueue(db, "test2")
 	q.Enqueue(db, "test3")
 	for i := 0; i < 5; i++ {
-		item, e := q.Dequeue(db)
-		if e != nil {
-			log.Fatal(e)
+		item, err := q.Dequeue(db)
+		if err != nil {
+			log.Fatal(err)
 		}
 
 		fmt.Println(string(item.([]byte)))

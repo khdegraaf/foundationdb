@@ -1,188 +1,234 @@
-set(FDBSERVER_SRCS
-  ApplyMetadataMutation.h
-  ClusterController.actor.cpp
-  ClusterRecruitmentInterface.h
-  ConflictSet.h
-  CoordinatedState.actor.cpp
-  CoordinatedState.h
-  Coordination.actor.cpp
-  CoordinationInterface.h
-  CoroFlow.actor.cpp
-  CoroFlow.h
-  DataDistribution.actor.cpp
-  DataDistribution.h
-  DataDistributionQueue.actor.cpp
-  DataDistributionTracker.actor.cpp
-  DataDistributorInterface.h
-  DBCoreState.h
-  DiskQueue.actor.cpp
-  fdbserver.actor.cpp
-  IDiskQueue.h
-  IKeyValueStore.h
-  IPager.h
-  IVersionedStore.h
-  IndirectShadowPager.actor.cpp
-  IndirectShadowPager.h
-  KeyValueStoreCompressTestData.actor.cpp
-  KeyValueStoreMemory.actor.cpp
-  KeyValueStoreSQLite.actor.cpp
-  Knobs.cpp
-  Knobs.h
-  LatencyBandConfig.cpp
-  LatencyBandConfig.h
-  LeaderElection.actor.cpp
-  LeaderElection.h
-  LogProtocolMessage.h
-  LogRouter.actor.cpp
-  LogSystem.h
-  LogSystemConfig.h
-  LogSystemDiskQueueAdapter.actor.cpp
-  LogSystemDiskQueueAdapter.h
-  LogSystemPeekCursor.actor.cpp
-  MasterInterface.h
-  MasterProxyServer.actor.cpp
-  masterserver.actor.cpp
-  MemoryPager.actor.cpp
-  MemoryPager.h
-  MoveKeys.actor.cpp
-  MoveKeys.actor.h
-  networktest.actor.cpp
-  NetworkTest.h
-  OldTLogServer_4_6.actor.cpp
-  OldTLogServer_6_0.actor.cpp
-  Orderer.actor.h
-  pubsub.actor.cpp
-  pubsub.h
-  QuietDatabase.actor.cpp
-  QuietDatabase.h
-  Ratekeeper.actor.cpp
-  Ratekeeper.h
-  RecoveryState.h
-  Restore.actor.cpp
-  RestoreInterface.h
-  Resolver.actor.cpp
-  ResolverInterface.h
-  ServerDBInfo.h
-  SimulatedCluster.actor.cpp
-  SimulatedCluster.h
-  SkipList.cpp
-  sqlite/btree.h
-  sqlite/hash.h
-  sqlite/sqlite3.h
-  sqlite/sqlite3ext.h
-  sqlite/sqliteInt.h
-  sqlite/sqliteLimit.h
-  sqlite/sqlite3.amalgamation.c
-  Status.actor.cpp
-  Status.h
-  StorageMetrics.actor.h
-  StorageMetrics.h
-  storageserver.actor.cpp
-  TagPartitionedLogSystem.actor.cpp
-  template_fdb.h
-  tester.actor.cpp
-  TesterInterface.actor.h
-  TLogInterface.h
-  TLogServer.actor.cpp
-  VersionedBTree.actor.cpp
-  VFSAsync.cpp
-  WaitFailure.actor.cpp
-  WaitFailure.h
-  worker.actor.cpp
-  WorkerInterface.actor.h
-  workloads/ApiCorrectness.actor.cpp
-  workloads/ApiWorkload.actor.cpp
-  workloads/ApiWorkload.h
-  workloads/AsyncFile.actor.h
-  workloads/AsyncFile.cpp
-  workloads/AsyncFileCorrectness.actor.cpp
-  workloads/AsyncFileRead.actor.cpp
-  workloads/AsyncFileWrite.actor.cpp
-  workloads/AtomicOps.actor.cpp
-  workloads/AtomicOpsApiCorrectness.actor.cpp
-  workloads/AtomicRestore.actor.cpp
-  workloads/AtomicSwitchover.actor.cpp
-  workloads/BackgroundSelectors.actor.cpp
-  workloads/BackupCorrectness.actor.cpp
-  workloads/BackupToDBAbort.actor.cpp
-  workloads/BackupToDBCorrectness.actor.cpp
-  workloads/BackupToDBUpgrade.actor.cpp
-  workloads/BulkLoad.actor.cpp
-  workloads/BulkSetup.actor.h
-  workloads/ChangeConfig.actor.cpp
-  workloads/ClientTransactionProfileCorrectness.actor.cpp
-  workloads/CommitBugCheck.actor.cpp
-  workloads/ConfigureDatabase.actor.cpp
-  workloads/ConflictRange.actor.cpp
-  workloads/ConsistencyCheck.actor.cpp
-  workloads/CpuProfiler.actor.cpp
-  workloads/Cycle.actor.cpp
-  workloads/DDBalance.actor.cpp
-  workloads/DDMetrics.actor.cpp
-  workloads/DiskDurability.actor.cpp
-  workloads/DiskDurabilityTest.actor.cpp
-  workloads/DummyWorkload.actor.cpp
-  workloads/FastTriggeredWatches.actor.cpp
-  workloads/FileSystem.actor.cpp
-  workloads/Fuzz.cpp
-  workloads/FuzzApiCorrectness.actor.cpp
-  workloads/Increment.actor.cpp
-  workloads/IndexScan.actor.cpp
-  workloads/Inventory.actor.cpp
-  workloads/KVStoreTest.actor.cpp
-  workloads/LockDatabase.actor.cpp
-  workloads/LogMetrics.actor.cpp
-  workloads/LowLatency.actor.cpp
-  workloads/MachineAttrition.actor.cpp
-  workloads/MemoryKeyValueStore.cpp
-  workloads/MemoryKeyValueStore.h
-  workloads/MemoryLifetime.actor.cpp
-  workloads/MetricLogging.actor.cpp
-  workloads/Performance.actor.cpp
-  workloads/Ping.actor.cpp
-  workloads/PubSubMultiples.actor.cpp
-  workloads/QueuePush.actor.cpp
-  workloads/RandomClogging.actor.cpp
-  workloads/RandomMoveKeys.actor.cpp
-  workloads/RandomSelector.actor.cpp
-  workloads/ReadWrite.actor.cpp
-  workloads/RemoveServersSafely.actor.cpp
-  workloads/Rollback.actor.cpp
-  workloads/RyowCorrectness.actor.cpp
-  workloads/RYWDisable.actor.cpp
-  workloads/RYWPerformance.actor.cpp
-  workloads/SaveAndKill.actor.cpp
-  workloads/SelectorCorrectness.actor.cpp
-  workloads/Serializability.actor.cpp
-  workloads/Sideband.actor.cpp
-  workloads/SlowTaskWorkload.actor.cpp
-  workloads/StatusWorkload.actor.cpp
-  workloads/Storefront.actor.cpp
-  workloads/StreamingRead.actor.cpp
-  workloads/TargetedKill.actor.cpp
-  workloads/TaskBucketCorrectness.actor.cpp
-  workloads/ThreadSafety.actor.cpp
-  workloads/Throughput.actor.cpp
-  workloads/TimeKeeperCorrectness.actor.cpp
-  workloads/UnitPerf.actor.cpp
-  workloads/UnitTests.actor.cpp
-  workloads/Unreadable.actor.cpp
-  workloads/VersionStamp.actor.cpp
-  workloads/WatchAndWait.actor.cpp
-  workloads/Watches.actor.cpp
-  workloads/WorkerErrors.actor.cpp
-  workloads/workloads.actor.h
-  workloads/WriteBandwidth.actor.cpp
-  workloads/WriteDuringRead.actor.cpp)
+fdb_find_sources(FDBSERVER_SRCS)
+list(FILTER FDBSERVER_SRCS EXCLUDE REGEX "^workloads/")
+include(AddFdbServerLinkTest)
+
+function(configure_fdbserver_common_includes target_name)
+  target_include_directories(${target_name} PRIVATE
+    ${CMAKE_SOURCE_DIR}/bindings/c
+    ${CMAKE_BINARY_DIR}/bindings/c)
+endfunction()
+
+function(configure_fdbserver_target_includes target_name)
+  configure_fdbserver_common_includes(${target_name})
+  target_include_directories(${target_name} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/include
+  )
+endfunction()
+
+if(WITH_ROCKSDB)
+  find_package(LZ4 REQUIRED)
+  include(CompileRocksDB)
+  if(WITH_LIBURING)
+    find_package(uring REQUIRED)
+  endif()
+endif()
+
+add_subdirectory(core)
+add_subdirectory(logsystem)
+add_subdirectory(kvstore)
+add_subdirectory(mocks3)
+add_subdirectory(restoreworker)
+add_subdirectory(clustercontroller)
+add_subdirectory(backupworker)
+add_subdirectory(commitproxy)
+add_subdirectory(coordinator)
+add_subdirectory(datadistributor)
+add_subdirectory(consistencyscan)
+add_subdirectory(grvproxy)
+add_subdirectory(logrouter)
+add_subdirectory(ratekeeper)
+add_subdirectory(resolver)
+add_subdirectory(sequencer)
+add_subdirectory(storageserver)
+add_subdirectory(tester)
+add_subdirectory(tlog)
+add_subdirectory(worker)
+add_subdirectory(workloads)
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/workloads)
 
 add_flow_target(EXECUTABLE NAME fdbserver SRCS ${FDBSERVER_SRCS})
-target_include_directories(fdbserver PRIVATE
-  ${CMAKE_CURRENT_BINARY_DIR}/workloads
-  ${CMAKE_CURRENT_SOURCE_DIR}/workloads)
-target_link_libraries(fdbserver PRIVATE fdbclient)
+
+if (WITH_SWIFT)
+  # Setup the Swift sources in FDBServer.
+  include(FindSwiftLibs)
+
+  add_definitions(-DWITH_SWIFT)
+
+  add_library(fdbserver_swift STATIC
+          sequencer/masterserver.swift
+          swift_fdbserver_cxx_swift_value_conformance.swift
+          swift_fdbserver_collections.swift
+          swift_fdbserver_stream_support.swift
+          UID.swift
+          # tests
+          swift/tests/Rainbow.swift
+          swift/tests/SimpleSwiftTestSuite.swift
+          swift/tests/swift_tests.swift
+          swift/tests/swift_test_task.swift
+          swift/tests/swift_test_streams.swift
+          )
+
+  target_include_directories(fdbserver_swift PUBLIC
+      "${CMAKE_BINARY_DIR}/flow/include"
+      "${CMAKE_BINARY_DIR}/flow/"
+      "${CMAKE_BINARY_DIR}/fdbclient"
+      "${CMAKE_BINARY_DIR}/fdbclient/include"
+      "${CMAKE_BINARY_DIR}/fdbserver/include"
+      "${CMAKE_SOURCE_DIR}/fdbserver/sequencer/include"
+      "${CMAKE_BINARY_DIR}/fdbserver/sequencer/include"
+      "${CMAKE_SOURCE_DIR}/fdbrpc/include"
+      "${CMAKE_BINARY_DIR}/fdbrpc/include"
+      "${CMAKE_SOURCE_DIR}/contrib/md5/include"
+      "${CMAKE_SOURCE_DIR}/contrib/libb64/include"
+      "${CMAKE_SOURCE_DIR}/contrib/sqlite"
+      "${Boost_DIR}/../../../include"
+      "${msgpack_DIR}/include"
+      "${CMAKE_SOURCE_DIR}/contrib/rapidjson"
+  )
+
+  # TODO: the TBD validation skip is because of swift_job_run_generic, though it seems weird why we need to do that?
+  target_compile_options(fdbserver_swift PRIVATE "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -std=c++20 -Xfrontend -validate-tbd-against-ir=none -Xcc -DNO_INTELLISENSE -Xcc -ivfsoverlay${CMAKE_BINARY_DIR}/flow/include/headeroverlay.yaml -Xcc -ivfsoverlay${CMAKE_BINARY_DIR}/fdbclient/include/headeroverlay.yaml -Xcc -ivfsoverlay${CMAKE_BINARY_DIR}/fdbserver/include/headeroverlay.yaml>")
+
+  # Ensure that C++ code in fdbserver can import Swift using a compatibility header.
+  include(SwiftToCXXInterop)
+
+  add_swift_to_cxx_header_gen_target(
+    fdbserver_swift
+    fdbserver_swift_to_cxx_conformance_header
+    "${CMAKE_CURRENT_BINARY_DIR}/include/SwiftModules/FDBServer_CxxTypeConformances.h"
+    SOURCES
+     "${CMAKE_CURRENT_SOURCE_DIR}/swift_fdbserver_cxx_swift_value_conformance.swift"
+     FLAGS
+  -Xcc -fmodules-cache-path=${CLANG_MODULE_CACHE_PATH}
+  -Xcc -std=c++20 -Xcc -DNO_INTELLISENSE -Xcc -ivfsoverlay${CMAKE_BINARY_DIR}/flow/include/headeroverlay.yaml -Xcc -ivfsoverlay${CMAKE_BINARY_DIR}/fdbclient/include/headeroverlay.yaml -Xcc -ivfsoverlay${CMAKE_BINARY_DIR}/fdbserver/include/headeroverlay.yaml
+  # Important: This is needed to avoid including header that depends on this generated header.
+  -Xcc -DFDBSERVER_FORWARD_DECLARE_SWIFT_APIS
+  -Xcc -DFOUNDATIONDB_FDBSERVER_STREAM_SUPPORT_H
+  )
+
+  add_swift_to_cxx_header_gen_target(
+    fdbserver_swift
+    fdbserver_swift_header
+    "${CMAKE_CURRENT_BINARY_DIR}/include/SwiftModules/FDBServer"
+     FLAGS
+  -Xcc -fmodules-cache-path=${CLANG_MODULE_CACHE_PATH}
+  -Xcc -std=c++20 -Xcc -DNO_INTELLISENSE -Xcc -ivfsoverlay${CMAKE_BINARY_DIR}/flow/include/headeroverlay.yaml -Xcc -ivfsoverlay${CMAKE_BINARY_DIR}/fdbclient/include/headeroverlay.yaml -Xcc -ivfsoverlay${CMAKE_BINARY_DIR}/fdbserver/include/headeroverlay.yaml
+  # Important: This is needed to avoid including the generated header while generating it.
+  -DFDBSERVER_FORWARD_DECLARE_SWIFT_APIS
+  -Xcc -DFDBSERVER_FORWARD_DECLARE_SWIFT_APIS
+  )
+
+  add_dependencies(fdbserver_swift_to_cxx_conformance_header flow_swift flow_swift_header flow_actors fdbclient_actors fdbrpc_actors fdbserver_actors fdboptions)
+  add_dependencies(fdbserver_swift_header fdbserver_swift_to_cxx_conformance_header)
+  add_dependencies(fdbserver_swift fdbserver_swift_header)
+
+  add_dependencies(fdbserver_swift flow_swift)
+  add_dependencies(fdbserver_swift flow_actors)
+  add_dependencies(fdbserver_swift fdbclient_swift)
+  add_dependencies(fdbserver_swift fdbserver_actors)
+  add_dependencies(fdbserver_sequencer fdbserver_swift_header)
+  # This does not work! (see rdar://99107402)
+  # target_link_libraries(flow PRIVATE flow_swift)
+  add_dependencies(fdbserver fdbserver_swift)
+
+  # TODO(swift): This probably should already work, try using link_libraries again
+  # target_link_libraries(fdbserver PRIVATE flow_swift fdbserver_swift)
+  add_dependencies(fdbserver flow_swift fdbclient_swift fdbserver_swift)
+  add_custom_target(show_fdbserver_swift_objs COMMAND ${CMAKE_COMMAND} -E echo "$<TARGET_OBJECTS:fdbserver_swift>")
+
+  target_link_options(fdbserver_swift PUBLIC "$<TARGET_OBJECTS:flow_swift>")
+  target_link_options(fdbserver PRIVATE "$<TARGET_OBJECTS:flow_swift>")
+
+  target_link_options(fdbserver_swift PUBLIC "$<TARGET_OBJECTS:fdbclient_swift>")
+  target_link_options(fdbserver PRIVATE "$<TARGET_OBJECTS:fdbclient_swift>")
+  # This dependency ensures that fdbserver depends on fdbclient_swift at link time.
+
+  target_link_options(fdbserver PRIVATE "$<TARGET_OBJECTS:fdbserver_swift>")
+  # This dependency ensures that fdbserver depends on fdbserver_swift at link time.
+
+  swift_get_linker_search_paths(SWIFT_LINK_PATHS)
+  target_link_directories(fdbserver PRIVATE "${SWIFT_LINK_PATHS}")
+
+  # Generate the module map for FDBServer.
+  include(GenerateModulemap)
+  set(FDBSERVER_BINARY_DIR "${CMAKE_BINARY_DIR}/fdbserver")
+  get_target_property(FDBSERVER_MODULE_HEADERS fdbserver HEADER_FILES)
+  if(NOT FDBSERVER_MODULE_HEADERS)
+    set(FDBSERVER_MODULE_HEADERS "")
+  endif()
+  generate_modulemap("${CMAKE_BINARY_DIR}/fdbserver/include" "FDBServer" fdbserver
+     HEADERS ${FDBSERVER_MODULE_HEADERS}
+     OMIT
+     ArtMutationBuffer.h # actually a textual include
+     art_impl.h # actually a textual include
+  )
+endif()
+
+configure_fdbserver_target_includes(fdbserver)
+target_link_libraries(fdbserver PRIVATE
+  fdbserver_mocks3
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,fdbserver_workloads>"
+  fdbserver_worker
+  fdbserver_backupworker
+  fdbserver_restoreworker
+  fdbserver_clustercontroller
+  fdbserver_commitproxy
+  fdbserver_consistencyscan
+  fdbserver_coordinator
+  fdbserver_datadistributor
+  fdbserver_grvproxy
+  fdbserver_kvstore
+  fdbserver_logrouter
+  fdbserver_logsystem
+  fdbserver_ratekeeper
+  fdbserver_resolver
+  fdbserver_sequencer
+  fdbserver_storageserver
+  fdbserver_tester
+  fdbserver_tlog
+  fdbserver_core)
+if (WITH_ROCKSDB)
+  add_dependencies(fdbserver rocksdb)
+  if(WITH_LIBURING)
+    target_include_directories(fdbserver PRIVATE ${ROCKSDB_INCLUDE_DIR} ${uring_INCLUDE_DIR})
+    target_link_libraries(fdbserver PRIVATE fdbclient sqlite ${ROCKSDB_LIBRARIES} ${uring_LIBRARIES} ${LZ4_LIBRARY})
+    target_compile_definitions(fdbserver PRIVATE BOOST_ASIO_HAS_IO_URING=1 BOOST_ASIO_DISABLE_EPOLL=1)
+  else()
+    target_include_directories(fdbserver PRIVATE ${ROCKSDB_INCLUDE_DIR})
+    target_link_libraries(fdbserver PRIVATE fdbclient sqlite ${ROCKSDB_LIBRARIES} ${LZ4_LIBRARY})
+  endif()
+else()
+  target_link_libraries(fdbserver PRIVATE fdbclient sqlite)
+endif()
+
+if(USE_JEMALLOC)
+  target_include_directories(fdbserver INTERFACE $<TARGET_PROPERTY:jemalloc::jemalloc, INTERFACE_INCLUDE_DIRECTORIES>)
+  target_link_libraries(fdbserver PRIVATE jemalloc::jemalloc)
+endif()
+
+target_link_libraries(fdbserver PRIVATE toml11_target rapidjson)
+if(WITH_ROCKSDB)
+  target_compile_definitions(fdbserver PRIVATE WITH_ROCKSDB)
+endif()
+
+if (WITH_SWIFT)
+  target_link_libraries(fdbserver PRIVATE swiftCxx swiftCxxStdlib)
+endif()
+# target_compile_definitions(fdbserver PRIVATE -DENABLE_SAMPLING)
+
+if(GPERFTOOLS_FOUND)
+  target_link_libraries(fdbserver PRIVATE gperftools)
+endif()
 
 if(NOT OPEN_FOR_IDE)
-  install(TARGETS fdbserver DESTINATION ${FDB_SBIN_DIR} COMPONENT server)
+  if(GENERATE_DEBUG_PACKAGES)
+    fdb_install(TARGETS fdbserver DESTINATION sbin COMPONENT server)
+  else()
+    add_custom_target(prepare_fdbserver_install ALL DEPENDS strip_only_fdbserver)
+    fdb_install(PROGRAMS ${CMAKE_BINARY_DIR}/packages/bin/fdbserver DESTINATION sbin COMPONENT server)
+  endif()
 endif()
+
+target_link_libraries(fdbserver PUBLIC fdbctl)

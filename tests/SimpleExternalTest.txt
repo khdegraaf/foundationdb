@@ -1,0 +1,4 @@
+testTitle=SimpleExternalTest
+    testName=External
+    libraryName=cpp_workloads
+    workloadName=SimpleWorkload

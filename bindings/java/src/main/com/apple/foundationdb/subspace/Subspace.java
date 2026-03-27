@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,8 +46,8 @@ import com.apple.foundationdb.tuple.Versionstamp;
  * </p>
  */
 public class Subspace {
-	static final Tuple EMPTY_TUPLE = Tuple.from();
-	static final byte[] EMPTY_BYTES = new byte[0];
+	private static final Tuple EMPTY_TUPLE = Tuple.from();
+	private static final byte[] EMPTY_BYTES = new byte[0];
 
 	private final byte[] rawPrefix;
 
@@ -232,7 +232,7 @@ public class Subspace {
 	}
 
 	/**
-	 * Gets a {@link Range} respresenting all keys strictly in the {@code Subspace}.
+	 * Gets a {@link Range} representing all keys strictly in the {@code Subspace}.
 	 *
 	 * @return the {@link Range} of keyspace corresponding to this {@code Subspace}
 	 */
@@ -248,8 +248,7 @@ public class Subspace {
 	 * @return the {@link Range} of keyspace corresponding to {@code tuple}
 	 */
 	public Range range(Tuple tuple) {
-		Range p = tuple.range();
-		return new Range(join(rawPrefix, p.begin), join(rawPrefix, p.end));
+		return tuple.range(rawPrefix);
 	}
 
 	/**

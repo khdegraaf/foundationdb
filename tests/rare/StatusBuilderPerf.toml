@@ -1,0 +1,13 @@
+# High priority number decreases the chance to run this test.
+# Priority 1.0 is the default in TestHarness2
+testPriority = '20'
+
+[[test]]
+testTitle = 'StatusBuilderPerf'
+useDB = false
+startDelay = 0
+
+    [[test.workload]]
+    testName = 'UnitTests'
+    maxTestCases = 1
+    testsMatching = 'Lstatus/json/builderPerf'

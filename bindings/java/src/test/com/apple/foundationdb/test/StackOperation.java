@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,7 +54,10 @@ enum StackOperation {
 	GET_KEY,
 	GET_READ_VERSION,
 	GET_COMMITTED_VERSION,
+	GET_APPROXIMATE_SIZE,
 	GET_VERSIONSTAMP,
+	GET_ESTIMATED_RANGE_SIZE,
+	GET_RANGE_SPLIT_POINTS,
 	SET_READ_VERSION,
 	ON_ERROR,
 	SUB,

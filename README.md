@@ -1,6 +1,8 @@
 <img alt="FoundationDB logo" src="documentation/FDB_logo.png?raw=true" width="400">
 
-FoundationDB is a distributed database designed to handle large volumes of structured data across clusters of commodity servers. It organizes data as an ordered key-value store and employs ACID transactions for all operations. It is especially well-suited for read/write workloads but also has excellent performance for write-intensive workloads. Users interact with the database using API language binding.
+![Build Status](https://codebuild.us-west-2.amazonaws.com/badges?uuid=eyJlbmNyeXB0ZWREYXRhIjoiVjVzb1RQNUZTaGxGNm9iUnk4OUZ1d09GdTMzZnVOT1YzaUU1RU1xR2o2TENRWFZjb3ZrTHJEcngrZVdnNE40bXJJVDErOGVwendIL3lFWFY3Y3oxQmdjPSIsIml2UGFyYW1ldGVyU3BlYyI6IlJUbWhnaUlJVXRORUNJTjQiLCJtYXRlcmlhbFNldFNlcmlhbCI6MX0%3D&branch=main)
+
+FoundationDB is a distributed database designed to handle large volumes of structured data across clusters of commodity servers. It organizes data as an ordered key-value store and employs ACID transactions for all operations. It is especially well-suited for read/write workloads, but also has excellent performance for write-intensive workloads. Users interact with the database using API language binding.
 
 To learn more about FoundationDB, visit [foundationdb.org](https://www.foundationdb.org/)
 
@@ -10,216 +12,209 @@ Documentation can be found online at <https://apple.github.io/foundationdb/>. Th
 
 ## Forums
 
-[The FoundationDB Forums](https://forums.foundationdb.org/) are the home for most of the discussion and communication about the FoundationDB project. We welcome your participation!  We want FoundationDB to be a great project to be a part of and, as part of that, have established a [Code of Conduct](CODE_OF_CONDUCT.md) to establish what constitutes permissible modes of interaction.
+[The FoundationDB Forums](https://forums.foundationdb.org/) are the home for most of the discussion and communication about the FoundationDB project. We welcome your participation!  We want FoundationDB to be a great project to be a part of, and as part of that, we have established a [Code of Conduct](CODE_OF_CONDUCT.md) to define what constitutes permissible modes of interaction.
 
 ## Contributing
 
-Contributing to FoundationDB can be in contributions to the code base, sharing your experience and insights in the community on the Forums, or contributing to projects that make use of FoundationDB. Please see the [contributing guide](CONTRIBUTING.md) for more specifics.
+Contributing to FoundationDB can be in contributions to the codebase, sharing your experience and insights in the community on the Forums, or contributing to projects that make use of FoundationDB. Please see the [contributing guide](CONTRIBUTING.md) for more specifics.
 
 ## Getting Started
 
-### Binary downloads
+### Latest Stable Releases
 
-Developers interested in using the FoundationDB store for an application can get started easily by downloading and installing a binary package. Please see the [downloads page](https://www.foundationdb.org/download/) for a list of available packages.
+The latest stable releases are (were) versions that are recommended for production use, which have been extensively validated via simulation and real cluster tests and used in our production environment.
+
+| Branch   |     Latest Production Release      |  Notes |
+|:--------:|:-------------:|------:|
+| 7.3      |  [7.3.69](https://github.com/apple/foundationdb/releases/tag/7.3.69) | Supported |
+| 7.2      |   | Experimental |
+| 7.1      |  [7.1.57](https://github.com/apple/foundationdb/releases/tag/7.1.57)   |   Bug fixes |
+| 7.0      |           |   Experimental |
+| 6.3      |  [6.3.25](https://github.com/apple/foundationdb/releases/tag/6.3.25) |   Unsupported |
+
+- `Supported` branches are those we actively maintain and will publish new patch releases.
+- `Bug fixes` are branches where we still accept bug fixes, but may not publish newer patch releases. The community can build the latest release binaries if needed and is encouraged to upgrade to the `Supported` branches.
+- `Experimental` branches are those used for internal feature testing. They are not recommended for production use.
+- `Unsupported` branches are those that will no longer receive any updates.
+
+If you are running on old production releases, we recommend always upgrading to the next major release's latest version, and then continuing to the next major version, e.g., 6.2.X -> 6.3.25 -> 7.1.57 -> 7.3.69. These upgrade paths have been well tested in production (skipping a major release, not marked as `Experimental`, for an upgrade is only tested in simulation).
+
+### Binary Downloads
+
+Developers interested in using FoundationDB can get started by downloading and installing a binary package. Please see the [downloads page](https://github.com/apple/foundationdb/releases) for a list of available packages.
 
 
 ### Compiling from source
 
-Developers on a OS for which there is no binary package, or who would like to start hacking on the code can get started by compiling from source.
+Developers on an OS for which there is no binary package, or who would like to start hacking on the code, can get started by compiling from source.
 
-Currently there are two build systems: a collection of Makefiles and a
-CMake-based. Both of them should work for most users and CMake will eventually
-become the only build system available.
+NOTE: FoundationDB has a lot of dependencies.  The Docker container
+listed below tracks them and is what we use internally and is the
+recommended method of building FDB.
 
-## Makefile
+#### Build Using the Official Docker Image
 
-#### MacOS
+The official Docker image for building is [`foundationdb/build`](https://hub.docker.com/r/foundationdb/build), which includes all necessary dependencies. The Docker image definitions used by FoundationDB team members can be found in the [dedicated repository](https://github.com/FoundationDB/fdb-build-support).
 
-1. Check out this repo on your Mac.
-1. Install the Xcode command-line tools.
-1. Download version 1.52 of [Boost](https://sourceforge.net/projects/boost/files/boost/1.52.0/).
-1. Set the `BOOSTDIR` environment variable to the location containing this boost installation.
-1. Install [Mono](http://www.mono-project.com/download/stable/).
-1. Install a [JDK](http://www.oracle.com/technetwork/java/javase/downloads/index.html). FoundationDB currently builds with Java 8.
-1. Navigate to the directory where you checked out the foundationdb repo.
-1. Run `make`.
+To build FoundationDB with the clang toolchain,
 
-#### Linux
+``` bash
+mkdir /some/build_output_dir
+cd /some/build_output_dir
+CC=clang CXX=clang++ LD=lld cmake -D USE_LD=LLD -D USE_LIBCXX=1 -G Ninja /some/fdb/source_dir
+ninja
+```
 
-1. Install [Docker](https://www.docker.com/).
-1. Check out the foundationdb repo.
-1. Run the docker image interactively [Docker Run](https://docs.docker.com/engine/reference/run/#general-form) with the directory containing the foundationdb repo mounted [Docker Mounts](https://docs.docker.com/storage/volumes/).
+To use GCC, a non-default version is necessary. The following modifies environment
+variables ($PATH, $LD_LIBRARY_PATH, etc) to pick up the right GCC version:
 
-    ```shell
-    docker run -it -v '/local/dir/path/foundationdb:/docker/dir/path/foundationdb' foundationdb/foundationdb-build:latest /bin/bash
-    ```
+``` bash
+source /opt/rh/gcc-toolset-13/enable
+gcc --version  # should say 13
+mkdir /some/build_output_dir
+cd /some/build_output_dir
+cmake -G Ninja /some/fdb/source_dir
+ninja
+```
 
-1. Navigate to the container's mounted directory which contains the foundationdb repo.
+Slightly more elaborate compile commands can be found in the shell aliases
+defined in `/root/.bashrc` in the container image.
 
-    ```shell
-    cd /docker/dir/path/foundationdb
-    ```
+#### Build Locally
 
-1. Run `make`.
+To build outside of the official Docker image, you'll need at least these dependencies:
 
-This will build the fdbserver binary and the python bindings. If you want to build our other bindings, you will need to install a runtime for the language whose binding you want to build. Each binding has an `.mk` file which provides specific targets for that binding.
+1. [CMake](https://cmake.org/) version 3.24.2 or higher 
+1. [Mono](https://www.mono-project.com/download/stable/)
+1. [ninja](https://ninja-build.org/)
 
-## CMake
+This list is likely to be incomplete. Refer to the rockylinux9
+Dockerfile in the `fdb-build-support` repo linked above for reference
+material on specific packages and versions that are likely to be
+required.
 
-FoundationDB is currently in the process of migrating the build system to cmake.
-The CMake build system is currently used by several developers. However, most of
-the testing and packaging infrastructure still uses the old VisualStudio+Make
-based build system.
+If compiling for local development, please set `-DUSE_WERROR=ON` in CMake. Our CI compiles with `-Werror` on, so this way you'll find out about compiler warnings that break the build earlier.
 
-To build with CMake, generally the following is required (works on Linux and
-Mac OS - for Windows see below):
+Once you have your dependencies, you can run `cmake` and then build:
 
 1. Check out this repository.
-1. Install cmake Version 3.12 or higher [CMake](https://cmake.org/)
-1. Download version 1.67 of [Boost](https://sourceforge.net/projects/boost/files/boost/1.67.0/). 
-1. Unpack boost (you don't need to compile it)
-1. Install [Mono](http://www.mono-project.com/download/stable/).
-1. Install a [JDK](http://www.oracle.com/technetwork/java/javase/downloads/index.html). FoundationDB currently builds with Java 8.
-1. Create a build directory (you can have the build directory anywhere you
-   like): `mkdir build`
-1. `cd build`
-1. `cmake -DBOOST_ROOT=<PATH_TO_BOOST> <PATH_TO_FOUNDATIONDB_DIRECTORY>`
-1. `make`
+1. Create a build directory (you can place it anywhere you like).
+1. `cd <FDB_BUILD_DIR>`
+1. `cmake -G Ninja <FDB_SOURCE_DIR>`
+1. `ninja`
 
-CMake will try to find its dependencies. However, for LibreSSL this can be often
-problematic (especially if OpenSSL is installed as well). For that we recommend
-passing the argument `-DLibreSSL_ROOT` to cmake. So, for example, if you
-LibreSSL is installed under /usr/local/libressl-2.8.3, you should call cmake like
-this:
+Building FoundationDB requires at least 8GB of memory. More memory is needed when building in parallel. If the computer freezes or crashes, consider disabling parallelized build using `ninja -j1`.
 
+
+#### FreeBSD
+
+1. Check out this repo on your server.
+
+1. Install compile-time dependencies from ports.
+
+1. (Optional) Use tmpfs & ccache for significantly faster repeat builds
+
+1. (Optional) Install a [JDK](https://www.freshports.org/java/openjdk8/) for Java Bindings. FoundationDB currently builds with Java 8.
+
+1. Navigate to the directory where you checked out the FoundationDB repository.
+
+1. Build from source.
+
+   ```shell
+   sudo pkg install -r FreeBSD \
+       shells/bash devel/cmake devel/ninja devel/ccache  \
+       lang/mono lang/python3 \
+       devel/boost-libs devel/libeio \
+       security/openssl
+   mkdir .build && cd .build
+   cmake -G Ninja \
+       -DUSE_CCACHE=on \
+       -DUSE_DTRACE=off \
+       ..
+   ninja -j 10
+   # run fast tests
+   ctest -L fast
+   # run all tests
+   ctest --output-on-failure -v
+   ```
+
+### macOS
+
+The build under macOS will work the same way as on Linux. [Homebrew](https://brew.sh/) can be used to install the `boost` library and the `ninja` build tool. Be carefull, curent main branch use boost 1.86, do install this version or just let cmake download one. Also, if swift binding is not interest, use -DBUILD_SWIFT_BINDING=OFF. One more thing, toml11project may block build process, mannualy change "cmake_minimum_required(VERSION 3.1)" to "cmake_minimum_required(VERSION 4.2)" in <BUILD_DIR>toml11Project-prefix/src/toml11Project/CMakeLists.txt and run again.
+
+```sh
+cmake -G Ninja <FDB_SOURCE_DIR> -B <BUILD_DIR>
+cd <BUILD_DIR>
+ninja
 ```
-cmake -DLibreSSL_ROOT=/usr/local/libressl-2.8.3/ ../foundationdb
+
+To generate an installable package,
+
+```sh
+<FDB_SOURCE_DIR>/packaging/osx/buildpkg.sh <BUILD_DIR> <FDB_SOURCE_DIR>
 ```
 
-FoundationDB will build just fine without LibreSSL, however, the resulting
-binaries won't support TLS connections.
+### Windows
+
+Under Windows, only Visual Studio with ClangCl is supported
+
+1. Install Visual Studio 2019 (IDE or Build Tools), and enable LLVM support
+1. Install  [CMake 3.24.2](https://cmake.org/download/) or higher
+1. Download [Boost 1.86.0](https://archives.boost.io/release/1.86.0/source/boost_1_86_0.tar.bz2)
+1. Unpack boost to C:\boost, or use `-DBOOST_ROOT=<PATH_TO_BOOST>` with `cmake` if unpacked elsewhere
+1. Install [Python](https://www.python.org/downloads/) if it is not already installed by Visual Studio
+1. (Optional) Install [OpenJDK 11](https://developers.redhat.com/products/openjdk/download) to build Java bindings
+1. (Optional) Install [OpenSSL 3.x](https://slproweb.com/products/Win32OpenSSL.html) to build with TLS support
+1. (Optional) Install [WIX Toolset](https://wixtoolset.org/) to build the Windows installer
+1. `mkdir build && cd build`
+1. `cmake -G "Visual Studio 16 2019" -A x64 -T ClangCl <FDB_SOURCE_DIR>`
+1. `msbuild /p:Configuration=Release foundationdb.sln`
+1. To increase build performance, use `/p:UseMultiToolTask=true` and `/p:CL_MPCount=<NUMBER_OF_PARALLEL_JOBS>` 
 
 ### Language Bindings
 
-The language bindings that are supported by cmake will have a corresponding
-`README.md` file in the corresponding `bindings/lang` directory.
+The language bindings that CMake supports will have a corresponding `README.md` file in the `bindings/lang` directory corresponding to each language.
 
-Generally, cmake will build all language bindings for which it can find all
-necessary dependencies. After each successful cmake run, cmake will tell you
-which language bindings it is going to build.
+Generally, CMake will build all language bindings for which it can find all necessary dependencies. After each successful CMake run, CMake will tell you which language bindings it is going to build.
 
 
-### Generating compile_commands.json
+### Generating `compile_commands.json`
 
-CMake can build a compilation database for you. However, the default generated
-one is not too useful as it operates on the generated files. When running make,
-the build system will create another `compile_commands.json` file in the source
-directory. This can than be used for tools like
-[CCLS](https://github.com/MaskRay/ccls),
-[CQuery](https://github.com/cquery-project/cquery), etc. This way you can get
-code-completion and code navigation in flow. It is not yet perfect (it will show
-a few errors) but we are constantly working on improving the development experience.
+CMake can build a compilation database for you. However, the default generated one is not too useful as it operates on the generated files. When running `ninja`, the build system creates another `compile_commands.json` file in the source directory. This can then be used for tools such as  [CCLS](https://github.com/MaskRay/ccls) and [CQuery](https://github.com/cquery-project/cquery), among others. This way, you can get code completion and code navigation in flow. It is not yet perfect (it will show a few errors), but we are continually working to improve the development experience.
+
+CMake will not produce a `compile_commands.json` by default; you must pass `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`.  This also enables the target `processed_compile_commands`, which rewrites `compile_commands.json` to describe the actor compiler source file, not the post-processed output files, and places the output file in the source directory.  This file should then be picked up automatically by any tooling.
+
+Note that if the building is done inside the `foundationdb/build` Docker image, the resulting paths will still be incorrect and require manual fixing. One will wish to re-run `cmake` with `-DCMAKE_EXPORT_COMPILE_COMMANDS=OFF` to prevent it from reverting the manual changes.
+
+### Running `clang-tidy`
+
+FoundationDB's CMake build supports opt-in `clang-tidy` execution during C/C++ compilation via `-DUSE_CLANG_TIDY=ON`.
+
+Example:
+
+```sh
+cmake -S <FDB_SOURCE_DIR> -B build -G Ninja \
+  -DUSE_CLANG_TIDY=ON
+ninja -C build fdbserver
+```
+
+Optional CMake variables:
+
+* `CLANG_TIDY`: path to the `clang-tidy` executable (auto-detected by default)
+* `CLANG_TIDY_EXTRA_ARGS`: additional space-separated arguments passed to `clang-tidy`
+
+If you prefer running `clang-tidy` manually, configure with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` and build the `processed_compile_commands` target. The generated source-tree `compile_commands.json` is Flow-aware and is usually the best compilation database to point `clang-tidy` at.
 
 ### Using IDEs
 
-CMake  has built in support for a number of popular IDEs. However, because flow
-files are precompiled with the actor compiler, an IDE will not be very useful as
-a user will only be presented with the generated code - which is not what she
-wants to edit and get IDE features for.
+CMake provides built-in support for several popular IDEs. However, most FoundationDB files are written in the `flow` language, which is an extension of the C++ programming language,  for coroutine support (Note that when FoundationDB was being developed, C++20 was not available). The `flow` language will be transpiled into C++ code using `actorcompiler`, while preventing most IDEs from recognizing `flow`-specific syntax.
 
-The good news is, that it is possible to generate project files for editing
-flow with a supported IDE. There is a cmake option called `OPEN_FOR_IDE` which
-will generate a project which can be opened in an IDE for editing. You won't be
-able to build this project, but you will be able to edit the files and get most
-edit and navigation features your IDE supports.
+It is possible to generate project files for editing `flow` with a supported IDE. There is a CMake option called `OPEN_FOR_IDE`, which creates a project that can be opened in an IDE for editing. This project cannot be built, but you will be able to edit the files and utilize most of the editing and navigation features that your IDE supports.
 
-For example, if you want to use XCode to make changes to FoundationDB you can
-create a XCode-project with the following command:
+For example, if you want to use Xcode to make changes to FoundationDB, you can create an Xcode project with the following command:
 
 ```sh
 cmake -G Xcode -DOPEN_FOR_IDE=ON <FDB_SOURCE_DIRECTORY>
 ```
 
-You should create a second build-directory which you will use for building
-(probably with make or ninja) and debugging.
-
-### Linux
-
-There are no special requirements for Linux. However, we are currently working
-on a Docker-based build as well.
-
-If you want to create a package you have to tell cmake what platform it is for.
-And then you can build by simply calling `cpack`. So for debian, call:
-
-```
-cmake -DINSTALL_LAYOUT=DEB  <FDB_SOURCE_DIR>
-make
-cpack
-```
-
-For RPM simply replace `DEB` with `RPM`.
-
-### MacOS
-
-The build under MacOS will work the same way as on Linux. To get LibreSSL and boost you
-can use [Hombrew](https://brew.sh/). LibreSSL will not be installed in
-`/usr/local` instead it will stay in `/usr/local/Cellar`. So the cmake command
-will look somethink like this:
-
-```sh
-cmake -DLibreSSL_ROOT=/usr/local/Cellar/libressl/2.8.3 <PATH_TO_FOUNDATIONDB_SOURCE>
-```
-
-To generate a installable package, you have to call CMake with the corresponding
-arguments and then use cpack to generate the package:
-
-```sh
-cmake -DINSTALL_LAYOUT=OSX  <FDB_SOURCE_DIR>
-make
-cpack
-```
-
-### Windows
-
-Under Windows, the build instructions are very similar, with the main difference
-that Visual Studio is used to compile.
-
-1. Install Visual Studio 2017 (Community Edition is tested)
-1. Install cmake Version 3.12 or higher [CMake](https://cmake.org/)
-1. Download version 1.67 of [Boost](https://sourceforge.net/projects/boost/files/boost/1.67.0/).
-1. Unpack boost (you don't need to compile it)
-1. Install [Mono](http://www.mono-project.com/download/stable/).
-1. Install a [JDK](http://www.oracle.com/technetwork/java/javase/downloads/index.html). FoundationDB currently builds with Java 8.
-1. Set `JAVA_HOME` to the unpacked location and JAVA_COMPILE to
-   `$JAVA_HOME/bin/javac`.
-1. (Optional) Install [WIX](http://wixtoolset.org/). Without it Visual Studio
-   won't build the Windows installer.
-1. Create a build directory (you can have the build directory anywhere you
-   like): `mkdir build`
-1. `cd build`
-1. `cmake -G "Visual Studio 15 2017 Win64" -DBOOST_ROOT=<PATH_TO_BOOST> <PATH_TO_FOUNDATIONDB_DIRECTORY>`
-1. This should succeed. In which case you can build using msbuild:
-   `msbuild /p:Configuration=Release foundationdb.sln`. You can also open the resulting
-   solution in Visual Studio and compile from there. However, be aware that
-   using Visual Studio for development is currently not supported as Visual
-   Studio will only know about the generated files. `msbuild` is located at
-   `c:\Program Files (x86)\MSBuild\14.0\Bin\MSBuild.exe` for Visual Studio 15.
-
-If you want TLS support to be enabled under Windows you currently have to build
-and install LibreSSL yourself as the newer LibreSSL versions are not provided
-for download from the LibreSSL homepage. To build LibreSSL:
-
-1. Download and unpack libressl (>= 2.8.2)
-2. `cd libressl-2.8.2`
-3. `mkdir build`
-4. `cd build`
-5. `cmake -G "Visual Studio 15 2017 Win64" ..`
-6. Open the generated `LibreSSL.sln` in Visual Studio as administrator (this is
-   necessary for the install)
-7. Build the `INSTALL` project in `Release` mode
-
-This will install LibreSSL under `C:\Program Files\LibreSSL`. After that `cmake`
-will automatically find it and build with TLS support.
-
-If you installed WIX before running `cmake` you should find the
-`FDBInstaller.msi` in your build directory under `packaging/msi`. 
+A second build directory with the `OPEN_FOR_IDE` flag off can be created for building and debugging purposes.

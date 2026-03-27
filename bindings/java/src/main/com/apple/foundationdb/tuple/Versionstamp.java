@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
-
 /**
  * Used to represent values written by versionstamp operations with a {@link Tuple}.
  *  This wraps a single array which should contain twelve bytes. The first ten bytes
@@ -37,7 +36,7 @@ import java.util.Arrays;
  *  over time. The final two bytes are the "user" version and should be set by the client.
  *  This allows the user to use this class to impose a total order of items across multiple
  *  transactions in the database in a consistent and conflict-free way. The user can elect to
- *  ignore this parameter by instantiating the class with the paramaterless {@link #incomplete() incomplete()}
+ *  ignore this parameter by instantiating the class with the parameterless {@link #incomplete() incomplete()}
  *  and one-parameter {@link #complete(byte[]) complete} static initializers. If they do so,
  *  then versions are written with a default (constant) user version.
  *
@@ -94,8 +93,8 @@ public class Versionstamp implements Comparable<Versionstamp> {
 	private static final byte[] UNSET_TRANSACTION_VERSION = {(byte)0xff, (byte)0xff, (byte)0xff, (byte)0xff, (byte)0xff,
 	                                                         (byte)0xff, (byte)0xff, (byte)0xff, (byte)0xff, (byte)0xff};
 
-	private boolean complete;
-	private byte[] versionBytes;
+	private final boolean complete;
+	private final byte[] versionBytes;
 
 	/**
 	 * From a byte array, unpack the user version starting at the given position.

@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,10 +22,8 @@
 
 package fdb
 
-/*
- #define FDB_API_VERSION 610
- #include <foundationdb/fdb_c.h>
-*/
+// #define FDB_API_VERSION 800
+// #include <foundationdb/fdb_c.h>
 import "C"
 
 import (
@@ -51,7 +49,9 @@ func (e Error) Error() string {
 // SOMEDAY: these (along with others) should be coming from fdb.options?
 
 var (
-	errNetworkNotSetup = Error{2008}
+	errNetworkNotSetup          = Error{2008}
+	errNetworkAlreadySetup      = Error{2009} // currently unused
+	errNetworkCannotBeRestarted = Error{2025} // currently unused
 
 	errAPIVersionUnset        = Error{2200}
 	errAPIVersionAlreadySet   = Error{2201}

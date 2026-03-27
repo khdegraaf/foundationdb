@@ -1,7 +1,6 @@
 .. default-domain:: py
 .. default-domain:: py
 .. highlight:: python
-.. module:: fdb
 
 .. Required substitutions for api-common.rst.inc
 
@@ -39,6 +38,22 @@
 .. |node-subspace| replace:: FIXME
 .. |content-subspace| replace:: FIXME
 .. |allow-manual-prefixes| replace:: FIXME
+.. |retry-limit-transaction-option| replace:: FIXME
+.. |timeout-transaction-option| replace:: FIXME
+.. |max-retry-delay-transaction-option| replace:: FIXME
+.. |size-limit-transaction-option| replace:: FIXME
+.. |snapshot-ryw-enable-transaction-option| replace:: FIXME
+.. |snapshot-ryw-disable-transaction-option| replace:: FIXME
+.. |snapshot-ryw-enable-database-option| replace:: FIXME
+.. |snapshot-ryw-disable-database-option| replace:: FIXME
+.. |retry-limit-database-option| replace:: FIXME
+.. |max-retry-delay-database-option| replace:: FIXME
+.. |transaction-size-limit-database-option| replace:: FIXME
+.. |timeout-database-option| replace:: FIXME
+.. |causal-read-risky-database-option| replace:: FIXME
+.. |causal-read-risky-transaction-option| replace:: FIXME
+.. |transaction-logging-max-field-length-transaction-option| replace:: FIXME
+.. |transaction-logging-max-field-length-database-option| replace:: FIXME
 
 .. include:: api-common.rst.inc
 
@@ -321,7 +336,7 @@ Transaction basics
 Transactions in FoundationDB
 ----------------------------
 
-FoundationDB provides concurrency control via transactions, allowing multiple clients to concurrently read and write data in the database with strong guarantees about how they affect each other. Specifically, FoundationDB provides global, ACID transactions with serializable isolation using optimistic concurrency.
+FoundationDB provides concurrency control via transactions, allowing multiple clients to concurrently read and write data in the database with strong guarantees about how they affect each other. Specifically, FoundationDB provides global, ACID transactions with strict serializability using optimistic concurrency.
 
 All reads and modifications of key-value pairs in FoundationDB are done within the context of a transaction. A transaction is a small unit of work that is both reliably performed and logically independent of other transactions.
 
@@ -355,7 +370,7 @@ An additional important property, though technically not part of ACID, is also g
 
 FoundationDB implements these properties using multiversion concurrency control (MVCC) for reads and optimistic concurrency for writes. As a result, neither reads nor writes are blocked by other readers or writers. Instead, conflicting transactions will fail at commit time and will usually be retried by the client.
 
-In particular, the reads in a transaction take place from an instantaneous snapshot of the database. From the perspective of the transaction this snapshot is not modified by the writes of other, concurrent transactions. When the transaction is ready to be committed, the FoundationDB cluster checks that it does not conflict with any previously committed transaction (i.e. that no value read by a transaction has been modified by another transaction since the read occurred) and, if it does conflict, rejects it. Rejected conflicting transactions are usually retried by the client. Accepted transactions are written to disk on multiple cluster nodes and then reported accepted to the client.
+In particular, the reads in a transaction take place from an instantaneous snapshot of the database. From the perspective of the transaction this snapshot is not modified by the writes of other, concurrent transactions. When the read-write transaction is ready to be committed (read-only transactions don't get committed and therefore never conflict), the FoundationDB cluster checks that it does not conflict with any previously committed transaction (i.e. that no value read by a transaction has been modified by another transaction since the read occurred) and, if it does conflict, rejects it. Rejected conflicting transactions are usually retried by the client. Accepted transactions are written to disk on multiple cluster nodes and then reported accepted to the client.
 
 * For more background on transactions, see Wikipedia articles for `Database transaction <http://en.wikipedia.org/wiki/Database_transaction>`_, `Atomicity (database systems) <http://en.wikipedia.org/wiki/Atomicity_(database_systems)>`_, and `Concurrency Control <http://en.wikipedia.org/wiki/Concurrency_control>`_.
 
@@ -412,7 +427,7 @@ By default, FoundationDB supports read-your-writes, meaning that reads reflect t
 
 Another approach to programming with futures in FoundationDB is to set a callback function to be invoked asynchronously when the future is ready.
 
-.. note:: Be very careful when mixing callbacks with explicit or implicit blocking. Blocking in a callback on a non-ready future will cause a deadlock. Blocking on anything else or performing CPU intensive tasks will block the FoundationDB client thread and therefore all database access from that client.
+.. note:: Be very careful when mixing callbacks with explicit or implicit blocking. Blocking in a callback on a non-ready future will cause a deadlock. Blocking on anything else or performing CPU intensive tasks will block the FoundationDB :ref:`client thread <client-network-thread>` and therefore all database access from that client.
 
 For further details, see the :doc:`API reference <api-reference>` documentation for your language.
 
@@ -453,7 +468,6 @@ In some situations, you may want to explicitly control the number of key-value p
 
   LIMIT = 100 # adjust according to data characteristics
 
-  @fdb.transactional
   def get_range_limited(tr, begin, end):
       keys_found = True
       while keys_found:
@@ -520,11 +534,22 @@ Atomic operations
 
 |atomic-ops-blurb1|
 
-Atomic operations are ideal for operating on keys that multiple clients modify frequently. For example, you can use a key as a counter and increment it with atomic :func:`add`::
+Atomic operations are ideal for operating on keys that multiple clients modify frequently. For example, you can use a key as a counter and increment/decrement it with atomic :func:`add`::
 
   @fdb.transactional
   def increment(tr, counter):
       tr.add(counter, struct.pack('<i', 1))
+
+  @fdb.transactional
+  def decrement(tr, counter):
+      tr.add(counter, struct.pack('<i', -1))
+
+When the counter value is decremented down to 0, you may want to clear the key from database. An easy way to do that is to use :func:`compare_and_clear`, which atomically compares the value against given parameter and clears it without issuing a read from client::
+
+  @fdb.transactional
+  def decrement(tr, counter):
+      tr.add(counter, struct.pack('<i', -1))
+      tr.compare_and_clear(counter, struct.pack('<i', 0))
 
 Similarly, you can use a key as a flag and toggle it with atomic :func:`xor`::
 
@@ -570,23 +595,27 @@ The following example illustrates both techniques. Together, they make a transac
         balanceKey = fdb.tuple.pack(('account', acctId))
         tr.add(balanceKey, amount)
 
+There is experimental support for preventing ``commit_unknown_result`` altogether using a transaction option. See :doc:`automatic-idempotency` for more details. Note: there are other errors which indicate an unknown commit status. See :ref:`non-retryable errors`.
+
 .. _conflict-ranges:
 
 Conflict ranges
 ---------------
 
-By default, FoundationDB transactions guarantee :ref:`serializable isolation <ACID>`, which results in a state that *could* have been produced by executing transactions one at a time, even though they may actually have been executed concurrently. FoundationDB maintains serializable isolation by detecting conflicts among concurrent transactions and allowing only a non-conflicting subset of them to succeed. Two concurrent transactions conflict if the first to commit writes a value that the second reads. In this case, the second transaction will fail. Clients will usually retry failed transactions.
+By default, FoundationDB transactions guarantee :ref:`strict serializability <ACID>`, which results in a state that *could* have been produced by executing transactions one at a time, even though they may actually have been executed concurrently. FoundationDB maintains strict serializability by detecting conflicts among concurrent transactions and allowing only a non-conflicting subset of them to succeed. Two concurrent transactions conflict if the first to commit writes a value that the second reads. In this case, the second transaction will fail. Clients will usually retry failed transactions.
 
-To detect conflicts, FoundationDB tracks the ranges of keys each transaction reads and writes. While most applications will use the serializable isolation that transactions provide by default, FoundationDB also provides several API features that manipulate conflict ranges to allow more precise control.
+To detect conflicts, FoundationDB tracks the ranges of keys each transaction reads and writes. While most applications will use the strictly serializable isolation that transactions provide by default, FoundationDB also provides several API features that manipulate conflict ranges to allow more precise control.
 
 Conflicts can be *avoided*, reducing isolation, in two ways:
 
-* Instead of ordinary (serializable) reads, you can perform :ref:`snapshot reads <snapshot isolation>`, which do not add read conflict ranges.
+* Instead of ordinary (strictly serializable) reads, you can perform :ref:`snapshot reads <snapshot isolation>`, which do not add read conflict ranges.
 * You can use :ref:`transaction options <api-python-transaction-options>` to disable conflict ranges for writes.
 
 Conflicts can be *created*, increasing isolation, by :ref:`explicitly adding <api-python-conflict-ranges>` read or write conflict ranges. 
 
-For example, suppose you have a transactional function that increments a set of counters using atomic addition. :ref:`developer-guide-atomic-operations` do not add read conflict ranges and so cannot cause the transaction in which they occur to fail. Most of the time, this is exactly what we want. However, suppose there is another transaction that (infrequently) resets one or more counters, and our contract requires that we must advance all specified counters in unison. We want to guarantee that if a counter is reset during an incrementing transaction, then the incrementing transaction will conflict. We can selectively add read conflicts ranges for this purpose::
+.. note:: *add read conflict range* behaves as if the client is reading the range. This means *add read conflict range* will not add conflict ranges for keys that have been written earlier in the same transaction. This is the intended behavior, as it allows users to compose transactions together without introducing unnecessary conflicts.
+
+For example, suppose you have a transactional function that increments a set of counters using atomic addition. :ref:`developer-guide-atomic-operations` do not add read conflict ranges and so cannot cause the transaction in which they occur to fail. More precisely, the read version for an atomic operation is the same as transaction's commit version, and thus no conflicting write from other transactions could be serialized between the read and write of the key. Most of the time, this is exactly what we want. However, suppose there is another transaction that (infrequently) resets one or more counters, and our contract requires that we must advance all specified counters in unison. We want to guarantee that if a counter is reset during an incrementing transaction, then the incrementing transaction will conflict. We can selectively add read conflicts ranges for this purpose::
 
   @fdb.transactional
   def guarded_increment(tr, counters):
@@ -601,9 +630,9 @@ Snapshot reads
 
 |snapshot-blurb1|
 
-The serializable isolation that transactions maintain by default has little performance cost when there are few conflicts but can be expensive when there are many. FoundationDB therefore also permits individual reads within a transaction to be done as snapshot reads. Snapshot reads differ from ordinary (serializable) reads by permitting the values they read to be modified by concurrent transactions, whereas serializable reads cause conflicts in that case.
+The strictly serializable isolation that transactions maintain by default has little performance cost when there are few conflicts but can be expensive when there are many. FoundationDB therefore also permits individual reads within a transaction to be done as snapshot reads. Snapshot reads differ from ordinary (strictly serializable) reads by permitting the values they read to be modified by concurrent transactions, whereas strictly serializable reads cause conflicts in that case.
 
-Consider a transaction which needs to remove and return an arbitrary value from a small range of keys.  The simplest implementation (using serializable isolation) would be::
+Consider a transaction which needs to remove and return an arbitrary value from a small range of keys.  The simplest implementation (using strictly serializable isolation) would be::
 
     @fdb.transactional
     def remove_one(tr, range):
@@ -624,7 +653,7 @@ Unfortunately, if a concurrent transaction happens to insert a new key anywhere 
 
 This transaction accomplishes the same task but won't conflict with the insert of a key elsewhere in the range. It will only conflict with a modification to the key it actually returns.
 
-By default, snapshot reads see the effects of prior writes in the same transaction. (This read-your-writes behavior is the same as for ordinary, serializable reads.) Read-your-writes allows transactional functions (such as the above example) to be easily composed within a single transaction because each function will see the writes of previously invoked functions.
+By default, snapshot reads see the effects of prior writes in the same transaction. (This read-your-writes behavior is the same as for ordinary, strictly serializable reads.) Read-your-writes allows transactional functions (such as the above example) to be easily composed within a single transaction because each function will see the writes of previously invoked functions.
 
 .. note::
   | The default read-your-writes behavior of snapshot reads is well-suited to the large majority of use cases. In less frequent cases, you may want to read from only a single version of the database. This behavior can be achieved through the appropriate :ref:`transaction options <api-python-snapshot-ryw>`. Transaction options are an advanced feature of the API and should be used with caution.
@@ -641,7 +670,7 @@ Using snapshot reads is appropriate when the following conditions all hold:
 
 * A particular read of frequently written values causes too many conflicts.
 * There isn't an easy way to reduce conflicts by splitting up data more granularly.
-* Any necessary invariants can be validated with added conflict ranges or more narrowly targeted serializable reads.
+* Any necessary invariants can be validated with added conflict ranges or more narrowly targeted strictly serializable reads.
 
 Transaction cancellation
 ------------------------
@@ -728,6 +757,7 @@ If you only need to detect the *fact* of a change, and your response doesn't dep
 
 .. _developer-guide-peformance-considerations:
 
+
 Performance considerations
 ==========================
 
@@ -794,3 +824,139 @@ Loading data is a common task in any database. Loading data in FoundationDB will
 * Use multiple processes loading in parallel if a single one is CPU-bound.
 
 Using these techniques, our cluster of 24 nodes and 48 SSDs loads about 3 billion (100 byte) key-value pairs per hour.
+
+Implementation Details
+======================
+
+These following sections go into some of the gritty details of FoundationDB. Most users don't need to read or understand this in order to use FoundationDB efficiently.
+
+How FoundationDB Detects Conflicts
+----------------------------------
+
+As written above, FoundationDB implements serializable transactions with external consistency. The underlying algorithm uses multi-version concurrency control. At commit time, each transaction is checked for read-write conflicts.
+
+Conceptually this algorithm is quite simple. Each transaction will get a read version assigned when it issues the first read or before it tries to commit. All reads that happen during that transaction will be read as of that version. Writes will go into a local cache and will be sent to FoundationDB during commit time. The transaction can successfully commit if it is conflict free; it will then get a commit-version assigned. A transaction is conflict free if and only if there have been no writes to any key that was read by that transaction between the time the transaction started and the commit time. This is true if there was no transaction with a commit version larger than our read version but smaller than our commit version that wrote to any of the keys that we read.
+
+This form of conflict detection, while simple, can often be confusing for people who are familiar with databases that check for write-write conflicts.
+
+Some interesting properties of FoundationDB transactions are:
+
+* FoundationDB transactions are optimistic: we never block on reads or writes (there are no locks), instead we abort transactions at commit time.
+* Read-only transactions will never conflict and never cause conflicts with other transactions.
+* Write-only transactions will never conflict but might cause future transactions to conflict.
+* For read-write transactions: A read will never cause any other transaction to be aborted - but reading a key might result in the current transaction being aborted at commit time. A write will never cause a conflict in the current transaction but might cause conflicts in transactions that try to commit in the future.
+* FoundationDB only uses the read conflict set and the write conflict set to resolve transactions. A user can read from and write to FoundationDB without adding entries to these sets. If not done carefully, this can cause non-serializable executions (see :ref:`Snapshot Reads <api-python-snapshot-reads>` and the :ref:`no-write-conflict-range option <api-python-no-write-conflict-range>` option).
+
+How Versions are Generated and Assigned
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Versions are generated by the process that runs the *master* role. FoundationDB guarantees that no version will be generated twice and that the versions are monotonically increasing.
+
+In order to assign read and commit versions to transactions, a client will never talk to the master. Instead it will get them from a GRV proxy and a commit proxy. Getting a read version is more complex than a commit version. Let's first look at commit versions:
+
+#. The client will send a commit message to a commit proxy.
+#. The commit proxy will put this commit message in a queue in order to build a batch.
+#. In parallel, the commit proxy will ask for a new version from the master (note that this means that only commit proxies will ever ask for new versions - which scales much better as it puts less stress on the network).
+#. The commit proxy will then resolve all transactions within that batch (discussed later) and assign the version it got from the master to *all* transactions within that batch. It will then write the transactions to the transaction log system to make it durable.
+#. If the transaction succeeded, it will send back the version as commit version to the client. Otherwise it will send back an error.
+
+As mentioned before, the algorithm to assign read versions is a bit more complex. At the start of a transaction, a client will ask a GRV proxy server for a read version. The GRV proxy will reply with the last committed version as of the time it received the request - this is important to guarantee external consistency. This is how this is achieved:
+
+#. The client will send a GRV (get read version) request to a GRV proxy.
+#. The GRV proxy will batch GRV requests for a short amount of time (it depends on load and configuration how big these batches will be).
+#. The proxy will do the following steps in parallel:
+   * Ask master for their most recent committed version (the largest version of proxies' committed version for which the transactions are successfully written to the transaction log system).
+   * Send a message to the transaction log system to verify that it is still writable. This is to prevent that we fetch read versions from a GRV proxy that has been declared to be dead.
+
+Checking whether the log-system is still writeable can be especially expensive if a clusters runs in a multi-region configuration. If a user is fine to sacrifice strict serializability they can use :ref:`option-causal-read-risky <api-python-option-set-causal-read-risky>`.
+
+Conflict Detection
+~~~~~~~~~~~~~~~~~~
+
+This section will only explain conceptually how transactions are resolved in FoundationDB. The implementation will use multiple servers running the *Resolver* role and the keyspace will be sharded across them. It will also only allow resolving transactions whose read versions are less than 5 million versions older than their commit version (around 5 seconds).
+
+A resolver will keep a map in memory which stores the written keys of each commit version. A simplified resolver state could look like this:
+
+=======    =======
+Version    Keys
+=======    =======
+1000       a, b
+1200       f, q, c
+1210       a
+1340       t, u, x
+=======    =======
+
+Now let's assume we have a transaction with read version *1200* and the assigned commit version will be something larger than 1340 - let's say it is *1450*. In that transaction we read keys ``b, m, s`` and we want to write to ``a``. Note that we didn't read ``a`` - so we will issue a blind write. The resolver will check whether any of the read keys (``b, m, or s``) appears in any line between version *1200* and the most recent version, *1450*. The last write to ``b`` was at version 1000 which was before the read version. This means that transaction read the most recent value. We don't know about any recent writes to the other keys. Therefore the resolver will decide that this transaction does *NOT* conflict and it can be committed. It will then add this new write set to its internal state so that it can resolve future transactions. The new state will look like this:
+
+=======    =======
+Version    Keys
+=======    =======
+1000       a, b
+1200       f, q, c
+1210       a
+1340       t, u, x
+1450       a
+=======    =======
+
+Note that the resolver didn't use the write set at all in order to make a decision whether the transaction can commit or not. This means that blind writes (writes to keys without reading them first) will never cause a conflict. But since the resolver will then remember these writes, blind writes can cause future transactions to conflict.
+
+Error Handling
+--------------
+
+When using FoundationDB we strongly recommend users to use the retry-loop. In Python the retry loop would look this this:
+
+.. code-block:: python
+
+   tr = tr.create_transaction()
+   while True:
+       try:
+           # execute reads and writes on FDB using the tr object
+           tr.commit().wait()
+           break
+       except FDBError as e:
+           tr.on_error(e.code).wait()
+
+This is also what the transaction decoration in python does, if you pass a ``Database`` object to a decorated function. There are some interesting properties of this retry loop:
+
+* We never create a new transaction within that loop. Instead ``tr.on_error`` will create a soft reset on the transaction.
+* ``tr.on_error`` returns a future. This is because ``on_error`` will do back off to make sure we don't overwhelm the cluster.
+* If ``tr.on_error`` throws an error, we exit the retry loop.
+
+If you use this retry loop, there are very few caveats. If you write your own and you are not careful, some things might behave differently than you would expect. The following sections will go over the most common errors you will see, the guarantees FoundationDB provides during failures, and common caveats. This retry loop will take care of most of these errors, but it might still be beneficial to understand those.
+
+Errors where we know the State of the Transaction
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The most common errors you will see are errors where we know that the transaction failed to commit. In this case, we're guaranteed that nothing that we attempted to write was written to the database. The most common error codes for this are:
+
+* ``not_committed`` is thrown whenever there was a conflict. This will only be thrown by a ``commit``, read and write operations won't generate this error.
+* ``transaction_too_old`` is thrown if your transaction runs for more than five seconds. If you see this error often, you should try to make your transactions shorter.
+* ``future_version`` is one of the slightly more complex errors. There are a couple ways this error could be generated: if you set the read version of your transaction manually to something larger than exists or if the storage servers are falling behind. The second case should be more common. This is usually caused by a write load that is too high for FoundationDB to handle or by faulty/slow disks.
+
+The good thing about these errors is that retrying is simple: you know that the transaction didn't commit and therefore you can retry even without thinking much about weird corner cases.
+
+The ``commit_unknown_result`` Error
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``commit_unknown_result`` can be thrown during a commit. This error is difficult to handle as you won't know whether your transaction was committed or not. There are mostly two reasons why you might see this error:
+
+#. The client lost the connection to the commit proxy to which it did send the commit. So it never got a reply and therefore can't know whether the commit was successful or not.
+#. There was a FoundationDB failure - for example a commit proxy failed during the commit. In that case there is no way for the client know whether the transaction succeeded or not.
+
+However, there is one guarantee FoundationDB gives to the caller: at the point of time where you receive this error, the transaction either committed or not and if it didn't commit, it will never commit in the future. Or: it is guaranteed that the transaction is not in-flight anymore. This is an important guarantee as it means that if your transaction is idempotent you can simply retry. For more explanations see developer-guide-unknown-results_.
+
+There is experimental support for preventing ``commit_unknown_result`` altogether using a transaction option. See :doc:`automatic-idempotency` for more details. Note: there are other errors which indicate an unknown commit status. See :ref:`non-retryable errors`.
+
+.. _non-retryable errors:
+
+Non-Retryable Errors
+~~~~~~~~~~~~~~~~~~~~
+
+The trickiest errors are non-retryable errors. ``Transaction.on_error`` will rethrow these. Some examples of non-retryable errors are:
+
+#. ``transaction_timed_out``. If you set a timeout for a transaction, the transaction will throw this error as soon as that timeout occurs.
+#. ``operation_cancelled``. This error is thrown if you call ``cancel()`` on any future returned by a transaction. So if this future is shared by multiple threads or coroutines, all other waiters will see this error.
+
+If you see one of those errors, the best way of action is to fail the client.
+
+At a first glance this looks very similar to an ``commit_unknown_result``. However, these errors lack the one guarantee ``commit_unknown_result`` still gives to the user: if the commit has already been sent to the database, the transaction could get committed at a later point in time. This means that if you retry the transaction, your new transaction might race with the old transaction. While this technically doesn't violate any consistency guarantees, abandoning a transaction means that there are no causality guarantees.

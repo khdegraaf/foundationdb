@@ -1,0 +1,8 @@
+{
+  global:
+    workloadFactory;
+    workloadCFactory;
+  local:
+    *;
+};
+

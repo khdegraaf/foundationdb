@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,6 +54,9 @@ namespace vexillographer
         public string paramDesc { get; set; }
         public int code { get; set; }
         public bool hidden { get; set; }
+        public bool persistent { get; set; }
+        public bool sensitive { get; set; }
+        public int defaultFor { get; set; }
         private string _comment;
         public string comment {
             get {
@@ -132,6 +135,10 @@ namespace vexillographer
                         var paramTypeStr = oDoc.AttributeOrNull("paramType");
                         ParamType p = paramTypeStr == null ? ParamType.None : (ParamType)Enum.Parse(typeof(ParamType), paramTypeStr);
                         bool hidden = oDoc.AttributeOrNull("hidden") == "true";
+                        bool persistent = oDoc.AttributeOrNull("persistent") == "true";
+                        bool sensitive = oDoc.AttributeOrNull("sensitive") == "true";
+                        String defaultForString = oDoc.AttributeOrNull("defaultFor");
+                        int defaultFor = defaultForString == null ? -1 : int.Parse(defaultForString);
                         string disableOn = oDoc.AttributeOrNull("disableOn");
                         bool disabled = false;
                         if(disableOn != null)
@@ -150,7 +157,10 @@ namespace vexillographer
                                 paramType = p,
                                 paramDesc = oDoc.AttributeOrNull("paramDescription"),
                                 comment = oDoc.AttributeOrNull("description"),
-                                hidden = hidden
+                                hidden = hidden,
+                                persistent = persistent,
+                                sensitive = sensitive,
+                                defaultFor = defaultFor
                             });
                         }
                     }

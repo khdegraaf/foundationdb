@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,9 +39,12 @@ package tuple
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
+	"strconv"
+	"strings"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 )
@@ -65,12 +68,96 @@ type TupleElement interface{}
 // packing T (modulo type normalization to []byte, uint64, and int64).
 type Tuple []TupleElement
 
+// String implements the fmt.Stringer interface and returns human-readable
+// string representation of this tuple. For most elements, we use the
+// object's default string representation.
+func (tuple Tuple) String() string {
+	sb := strings.Builder{}
+	printTuple(tuple, &sb)
+	return sb.String()
+}
+
+func printTuple(tuple Tuple, sb *strings.Builder) {
+	sb.WriteString("(")
+
+	for i, t := range tuple {
+		switch t := t.(type) {
+		case Tuple:
+			printTuple(t, sb)
+		case nil:
+			sb.WriteString("<nil>")
+		case string:
+			sb.WriteString(strconv.Quote(t))
+		case UUID:
+			sb.WriteString("UUID(")
+			sb.WriteString(t.String())
+			sb.WriteString(")")
+		case []byte:
+			sb.WriteString("b\"")
+			sb.WriteString(fdb.Printable(t))
+			sb.WriteString("\"")
+		default:
+			// For user-defined and standard types, we use standard Go
+			// printer, which itself uses Stringer interface.
+			fmt.Fprintf(sb, "%v", t)
+		}
+
+		if i < len(tuple)-1 {
+			sb.WriteString(", ")
+		}
+	}
+
+	sb.WriteString(")")
+}
+
 // UUID wraps a basic byte array as a UUID. We do not provide any special
 // methods for accessing or generating the UUID, but as Go does not provide
 // a built-in UUID type, this simple wrapper allows for other libraries
 // to write the output of their UUID type as a 16-byte array into
 // an instance of this type.
 type UUID [16]byte
+
+func (uuid UUID) String() string {
+	return fmt.Sprintf("%x-%x-%x-%x-%x", uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:])
+}
+
+// Versionstamp is struct for a FoundationDB verionstamp. Versionstamps are
+// 12 bytes long composed of a 10 byte transaction version and a 2 byte user
+// version. The transaction version is filled in at commit time and the user
+// version is provided by the application to order results within a transaction.
+type Versionstamp struct {
+	TransactionVersion [10]byte
+	UserVersion        uint16
+}
+
+// Returns a human-readable string for this Versionstamp.
+func (vs Versionstamp) String() string {
+	return fmt.Sprintf("Versionstamp(%s, %d)", fdb.Printable(vs.TransactionVersion[:]), vs.UserVersion)
+}
+
+var incompleteTransactionVersion = [10]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
+
+const versionstampLength = 12
+
+// IncompleteVersionstamp is the constructor you should use to make
+// an incomplete versionstamp to use in a tuple.
+func IncompleteVersionstamp(userVersion uint16) Versionstamp {
+	return Versionstamp{
+		TransactionVersion: incompleteTransactionVersion,
+		UserVersion:        userVersion,
+	}
+}
+
+// Bytes converts a Versionstamp struct to a byte slice for encoding in a tuple.
+func (v Versionstamp) Bytes() []byte {
+	var scratch [versionstampLength]byte
+
+	copy(scratch[:], v.TransactionVersion[:])
+
+	binary.BigEndian.PutUint16(scratch[10:], v.UserVersion)
+
+	return scratch[:]
+}
 
 // Type codes: These prefix the different elements in a packed Tuple
 // to indicate what type they are.
@@ -86,6 +173,7 @@ const doubleCode = 0x21
 const falseCode = 0x26
 const trueCode = 0x27
 const uuidCode = 0x30
+const versionstampCode = 0x33
 
 var sizeLimits = []uint64{
 	1<<(0*8) - 1,
@@ -122,7 +210,15 @@ func adjustFloatBytes(b []byte, encode bool) {
 }
 
 type packer struct {
-	buf []byte
+	versionstampPos int32
+	buf             []byte
+}
+
+func newPacker() *packer {
+	return &packer{
+		versionstampPos: -1,
+		buf:             make([]byte, 0, 64),
+	}
 }
 
 func (p *packer) putByte(b byte) {
@@ -249,7 +345,22 @@ func (p *packer) encodeUUID(u UUID) {
 	p.putBytes(u[:])
 }
 
-func (p *packer) encodeTuple(t Tuple, nested bool) {
+func (p *packer) encodeVersionstamp(v Versionstamp) {
+	p.putByte(versionstampCode)
+
+	isIncomplete := v.TransactionVersion == incompleteTransactionVersion
+	if isIncomplete {
+		if p.versionstampPos != -1 {
+			panic(fmt.Sprintf("Tuple can only contain one incomplete versionstamp"))
+		}
+
+		p.versionstampPos = int32(len(p.buf))
+	}
+
+	p.putBytes(v.Bytes())
+}
+
+func (p *packer) encodeTuple(t Tuple, nested bool, versionstamps bool) {
 	if nested {
 		p.putByte(nestedCode)
 	}
@@ -257,7 +368,7 @@ func (p *packer) encodeTuple(t Tuple, nested bool) {
 	for i, e := range t {
 		switch e := e.(type) {
 		case Tuple:
-			p.encodeTuple(e, true)
+			p.encodeTuple(e, true, versionstamps)
 		case nil:
 			p.putByte(nilCode)
 			if nested {
@@ -293,6 +404,12 @@ func (p *packer) encodeTuple(t Tuple, nested bool) {
 			}
 		case UUID:
 			p.encodeUUID(e)
+		case Versionstamp:
+			if versionstamps == false && e.TransactionVersion == incompleteTransactionVersion {
+				panic(fmt.Sprintf("Incomplete Versionstamp included in vanilla tuple pack"))
+			}
+
+			p.encodeVersionstamp(e)
 		default:
 			panic(fmt.Sprintf("unencodable element at index %d (%v, type %T)", i, t[i], t[i]))
 		}
@@ -306,17 +423,100 @@ func (p *packer) encodeTuple(t Tuple, nested bool) {
 // Pack returns a new byte slice encoding the provided tuple. Pack will panic if
 // the tuple contains an element of any type other than []byte,
 // fdb.KeyConvertible, string, int64, int, uint64, uint, *big.Int, big.Int, float32,
-// float64, bool, tuple.UUID, nil, or a Tuple with elements of valid types. It will
-// also panic if an integer is specified with a value outside the range
-// [-2**2040+1, 2**2040-1]
+// float64, bool, tuple.UUID, tuple.Versionstamp, nil, or a Tuple with elements of
+// valid types. It will also panic if an integer is specified with a value outside
+// the range [-2**2040+1, 2**2040-1]
 //
 // Tuple satisfies the fdb.KeyConvertible interface, so it is not necessary to
 // call Pack when using a Tuple with a FoundationDB API function that requires a
 // key.
+//
+// This method will panic if it contains an incomplete Versionstamp. Use
+// PackWithVersionstamp instead.
 func (t Tuple) Pack() []byte {
-	p := packer{buf: make([]byte, 0, 64)}
-	p.encodeTuple(t, false)
+	p := newPacker()
+	p.encodeTuple(t, false, false)
 	return p.buf
+}
+
+// PackWithVersionstamp packs the specified tuple into a key for versionstamp
+// operations. See Pack for more information. This function will return an error
+// if you attempt to pack a tuple with more than one versionstamp. This function will
+// return an error if you attempt to pack a tuple with a versionstamp position larger
+// than an uint16 if the API version is less than 520.
+func (t Tuple) PackWithVersionstamp(prefix []byte) ([]byte, error) {
+	hasVersionstamp, err := t.HasIncompleteVersionstamp()
+	if err != nil {
+		return nil, err
+	}
+
+	apiVersion, err := fdb.GetAPIVersion()
+	if err != nil {
+		return nil, err
+	}
+
+	if hasVersionstamp == false {
+		return nil, errors.New("No incomplete versionstamp included in tuple pack with versionstamp")
+	}
+
+	p := newPacker()
+
+	if prefix != nil {
+		p.putBytes(prefix)
+	}
+
+	p.encodeTuple(t, false, true)
+
+	if hasVersionstamp {
+		var scratch [4]byte
+		var offsetIndex int
+		if apiVersion < 520 {
+			if p.versionstampPos > math.MaxUint16 {
+				return nil, errors.New("Versionstamp position too large")
+			}
+
+			offsetIndex = 2
+			binary.LittleEndian.PutUint16(scratch[:], uint16(p.versionstampPos))
+		} else {
+			offsetIndex = 4
+			binary.LittleEndian.PutUint32(scratch[:], uint32(p.versionstampPos))
+		}
+
+		p.putBytes(scratch[0:offsetIndex])
+	}
+
+	return p.buf, nil
+}
+
+// HasIncompleteVersionstamp determines if there is at least one incomplete
+// versionstamp in a tuple. This function will return an error this tuple has
+// more than one versionstamp.
+func (t Tuple) HasIncompleteVersionstamp() (bool, error) {
+	incompleteCount := t.countIncompleteVersionstamps()
+
+	var err error
+	if incompleteCount > 1 {
+		err = errors.New("Tuple can only contain one incomplete versionstamp")
+	}
+
+	return incompleteCount >= 1, err
+}
+
+func (t Tuple) countIncompleteVersionstamps() int {
+	incompleteCount := 0
+
+	for _, el := range t {
+		switch e := el.(type) {
+		case Versionstamp:
+			if e.TransactionVersion == incompleteTransactionVersion {
+				incompleteCount++
+			}
+		case Tuple:
+			incompleteCount += e.countIncompleteVersionstamps()
+		}
+	}
+
+	return incompleteCount
 }
 
 func findTerminator(b []byte) int {
@@ -438,6 +638,20 @@ func decodeUUID(b []byte) (UUID, int) {
 	return u, 17
 }
 
+func decodeVersionstamp(b []byte) (Versionstamp, int) {
+	var transactionVersion [10]byte
+	var userVersion uint16
+
+	copy(transactionVersion[:], b[1:11])
+
+	userVersion = binary.BigEndian.Uint16(b[11:])
+
+	return Versionstamp{
+		TransactionVersion: transactionVersion,
+		UserVersion:        userVersion,
+	}, versionstampLength + 1
+}
+
 func decodeTuple(b []byte, nested bool) (Tuple, int, error) {
 	var t Tuple
 
@@ -489,6 +703,11 @@ func decodeTuple(b []byte, nested bool) (Tuple, int, error) {
 				return nil, i, fmt.Errorf("insufficient bytes to decode UUID starting at position %d of byte array for tuple", i)
 			}
 			el, off = decodeUUID(b[i:])
+		case b[i] == versionstampCode:
+			if i+versionstampLength+1 > len(b) {
+				return nil, i, fmt.Errorf("insufficient bytes to decode Versionstamp starting at position %d of byte array for tuple", i)
+			}
+			el, off = decodeVersionstamp(b[i:])
 		case b[i] == nestedCode:
 			var err error
 			el, off, err = decodeTuple(b[i+1:], true)

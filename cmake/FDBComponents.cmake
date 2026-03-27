@@ -1,58 +1,126 @@
 set(FORCE_ALL_COMPONENTS OFF CACHE BOOL "Fails cmake if not all dependencies are found")
 
 ################################################################################
-# LibreSSL
+# jemalloc
 ################################################################################
 
-set(DISABLE_TLS OFF CACHE BOOL "Don't try to find LibreSSL and always build without TLS support")
-if(DISABLE_TLS)
-  set(WITH_TLS OFF)
-else()
-  set(LIBRESSL_USE_STATIC_LIBS TRUE)
-  find_package(LibreSSL)
-  if(LibreSSL_FOUND)
-    set(WITH_TLS ON)
-    add_compile_options(-DHAVE_OPENSSL)
+if(USE_JEMALLOC)
+  if(NOT USE_CUSTOM_JEMALLOC)
+    find_package(jemalloc 5.3.0 REQUIRED)
   else()
-    message(STATUS "LibreSSL NOT Found - Will compile without TLS Support")
-    message(STATUS "You can set LibreSSL_ROOT to the LibreSSL install directory to help cmake find it")
-    set(WITH_TLS OFF)
+    include(Jemalloc)
   endif()
 endif()
 
 ################################################################################
-# Java Bindings
+# Valgrind
 ################################################################################
 
-set(WITH_JAVA OFF)
-find_package(JNI 1.8 REQUIRED)
-find_package(Java 1.8 COMPONENTS Development)
-if(JNI_FOUND AND Java_FOUND AND Java_Development_FOUND)
-  set(WITH_JAVA ON)
-  include(UseJava)
-  enable_language(Java)
+if(USE_VALGRIND)
+  find_package(valgrind REQUIRED)
+  add_library(valgrind INTERFACE)
+  target_include_directories(valgrind INTERFACE "${valgrind_INCLUDE_DIRS}")
+endif()
+
+################################################################################
+# SSL & ZLIB
+################################################################################
+
+set(CMAKE_REQUIRED_INCLUDES ${OPENSSL_INCLUDE_DIR})
+# Statically link OpenSSL to FDB, see
+#    https://cmake.org/cmake/help/v3.24/module/FindOpenSSL.html
+# Without the flags, OpenSSL is dynamically linked.
+set(OPENSSL_USE_STATIC_LIBS TRUE)
+if (WIN32)
+  set(OPENSSL_MSVC_STATIC_RT ON)
+endif()
+# SSL requires ZLIB
+find_package(ZLIB REQUIRED)
+find_package(OpenSSL REQUIRED)
+add_compile_options(-DHAVE_OPENSSL)
+
+################################################################################
+# Swift Support
+################################################################################
+
+if (WITH_SWIFT)
+  message(DEBUG "Building with Swift")
+  add_definitions(-DWITH_SWIFT)
+  set(WITH_SWIFT ON)
 else()
-  set(WITH_JAVA OFF)
+  message(DEBUG "Not building with Swift")
+  set(WITH_SWIFT OFF)
 endif()
 
 ################################################################################
 # Python Bindings
 ################################################################################
 
-find_package(Python COMPONENTS Interpreter)
-if(Python_Interpreter_FOUND)
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
   set(WITH_PYTHON ON)
 else()
-  message(FATAL_ERROR "Could not found a suitable python interpreter")
+  message(WARNING "Could not found a suitable python interpreter")
   set(WITH_PYTHON OFF)
+endif()
+
+option(BUILD_PYTHON_BINDING "build python binding" ON)
+if(NOT BUILD_PYTHON_BINDING OR NOT WITH_PYTHON)
+  set(WITH_PYTHON_BINDING OFF)
+else()
+  if(WITH_PYTHON)
+    set(WITH_PYTHON_BINDING ON)
+  else()
+    message(WARNING "Python binding depends on Python, but a python interpreter is not found")
+    set(WITH_PYTHON_BINDING OFF)
+  endif()
+endif()
+
+################################################################################
+# C Bindings
+################################################################################
+
+option(BUILD_C_BINDING "build C binding" ON)
+if(BUILD_C_BINDING AND NOT WITH_PYTHON)
+    message(WARNING "C binding depends on Python, but a python interpreter is not found")
+endif()
+if(BUILD_C_BINDING AND WITH_PYTHON)
+  set(WITH_C_BINDING ON)
+else()
+  set(WITH_C_BINDING OFF)
+endif()
+
+################################################################################
+# Java Bindings
+################################################################################
+
+option(BUILD_JAVA_BINDING "build java binding" ON)
+if(BUILD_JAVA_BINDING AND NOT WITH_C_BINDING)
+  message(WARNING "Java binding depends on C binding, but C binding is not enabled")
+endif()
+if(NOT BUILD_JAVA_BINDING OR NOT WITH_C_BINDING)
+  set(WITH_JAVA_BINDING OFF)
+else()
+  set(WITH_JAVA_BINDING OFF)
+  find_package(JNI 1.8)
+  find_package(Java 1.8 COMPONENTS Development)
+  # leave FreeBSD JVM compat for later
+  if(JNI_FOUND AND Java_FOUND AND Java_Development_FOUND AND NOT (CMAKE_SYSTEM_NAME STREQUAL "FreeBSD") AND WITH_C_BINDING)
+    set(WITH_JAVA_BINDING ON)
+    include(UseJava)
+    enable_language(Java)
+  else()
+    set(WITH_JAVA_BINDING OFF)
+  endif()
 endif()
 
 ################################################################################
 # Pip
 ################################################################################
 
-find_package(Virtualenv)
-if (Virtualenv_FOUND)
+option(BUILD_DOCUMENTATION "build documentation" ON)
+find_package(Python3 COMPONENTS Interpreter)
+if (WITH_PYTHON AND Python3_Interpreter_FOUND AND BUILD_DOCUMENTATION)
   set(WITH_DOCUMENTATION ON)
 else()
   set(WITH_DOCUMENTATION OFF)
@@ -62,23 +130,236 @@ endif()
 # GO
 ################################################################################
 
-find_program(GO_EXECUTABLE go)
-# building the go binaries is currently not supported on Windows
-if(GO_EXECUTABLE AND NOT WIN32)
-  set(WITH_GO ON)
+option(BUILD_GO_BINDING "build go binding" ON)
+if(BUILD_GO_BINDING AND NOT WITH_C_BINDING)
+  message(WARNING "Go binding depends on C binding, but C binding is not enabled")
+endif()
+if(NOT BUILD_GO_BINDING OR NOT BUILD_C_BINDING)
+  set(WITH_GO_BINDING OFF)
 else()
-  set(WITH_GO OFF)
+  find_program(GO_EXECUTABLE go HINTS /usr/local/go/bin/)
+  # building the go binaries is currently not supported on Windows
+  if(GO_EXECUTABLE AND NOT WIN32 AND WITH_C_BINDING)
+    set(WITH_GO_BINDING ON)
+  else()
+    set(WITH_GO_BINDING OFF)
+  endif()
+  if (USE_SANITIZER)
+    # Disable building go for sanitizers, since _stacktester doesn't link properly
+    set(WITH_GO_BINDING OFF)
+  endif()
+endif()
+
+################################################################################
+# Swift
+################################################################################
+
+option(BUILD_SWIFT_BINDING "build swift binding" ON)
+if(BUILD_SWIFT_BINDING AND NOT WITH_C_BINDING)
+  message(WARNING "Swift binding depends on C binding, but C binding is not enabled")
+endif()
+
+if(NOT BUILD_SWIFT_BINDING OR NOT BUILD_C_BINDING OR OPEN_FOR_IDE OR NOT WITH_SWIFT)
+  set(WITH_SWIFT_BINDING OFF)
+else()
+  find_program(SWIFT_EXECUTABLE swift)
+  if(SWIFT_EXECUTABLE AND CMAKE_Swift_COMPILER)
+    # Check Swift version - require 6.1 or higher
+    execute_process(
+      COMMAND ${SWIFT_EXECUTABLE} --version
+      OUTPUT_VARIABLE SWIFT_VERSION_OUTPUT
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    string(REGEX MATCH "Swift version ([0-9]+)\\.([0-9]+)" SWIFT_VERSION_MATCH "${SWIFT_VERSION_OUTPUT}")
+    if(SWIFT_VERSION_MATCH)
+      set(SWIFT_VERSION_MAJOR ${CMAKE_MATCH_1})
+      set(SWIFT_VERSION_MINOR ${CMAKE_MATCH_2})
+      set(SWIFT_VERSION "${SWIFT_VERSION_MAJOR}.${SWIFT_VERSION_MINOR}")
+      message(STATUS "Found Swift version ${SWIFT_VERSION}")
+
+      if(SWIFT_VERSION_MAJOR LESS 6 OR (SWIFT_VERSION_MAJOR EQUAL 6 AND SWIFT_VERSION_MINOR LESS 1))
+        message(STATUS "Swift bindings require Swift 6.1 or higher (found ${SWIFT_VERSION})")
+        set(WITH_SWIFT_BINDING OFF)
+      else()
+        set(WITH_SWIFT_BINDING ON)
+      endif()
+    else()
+      message(STATUS "Could not determine Swift version")
+      set(WITH_SWIFT_BINDING OFF)
+    endif()
+  else()
+    set(WITH_SWIFT_BINDING OFF)
+  endif()
+  if (USE_SANITIZER)
+    set(WITH_SWIFT_BINDING OFF)
+  endif()
+
+  # Swift bindings require Clang compiler
+  if(WITH_SWIFT_BINDING AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(STATUS "Swift bindings are not supported in non-Clang environment (current compiler: ${CMAKE_CXX_COMPILER_ID})")
+    set(WITH_SWIFT_BINDING OFF)
+  endif()
+
+  # Swift bindings on Linux require libc++ (Swift uses libc++ standard library)
+  if(WITH_SWIFT_BINDING AND NOT APPLE AND NOT USE_LIBCXX)
+    message(STATUS "Swift bindings on Linux require USE_LIBCXX=ON (Swift requires libc++ standard library)")
+    set(WITH_SWIFT_BINDING OFF)
+  endif()
+
+  if(NOT EXISTS "${CMAKE_SOURCE_DIR}/bindings/swift" AND WITH_SWIFT_BINDING)
+    message(STATUS "Swift bindings directory not found at ${CMAKE_SOURCE_DIR}/bindings/swift")
+    message(STATUS "Downloading Swift bindings from GitHub...")
+
+    # TODO: Make it download a release version if we are on release branch?
+    include(FetchContent)
+    FetchContent_Declare(
+      swift_bindings
+      GIT_REPOSITORY https://github.com/FoundationDB/fdb-swift-bindings.git
+      GIT_TAG        main
+      SOURCE_DIR     ${CMAKE_SOURCE_DIR}/bindings/swift
+      # Prevent automatic add_subdirectory by pointing to non-existent CMakeLists.txt location
+      SOURCE_SUBDIR  ".__none__"
+    )
+    # This will download but won't add to build due to SOURCE_SUBDIR trick
+    FetchContent_MakeAvailable(swift_bindings)
+    message(STATUS "Swift bindings downloaded successfully to ${CMAKE_SOURCE_DIR}/bindings/swift")
+  endif()
+
 endif()
 
 ################################################################################
 # Ruby
 ################################################################################
 
-find_program(GEM_EXECUTABLE gem)
-set(WITH_RUBY OFF)
-if(GEM_EXECUTABLE)
-  set(GEM_COMMAND ${RUBY_EXECUTABLE} ${GEM_EXECUTABLE})
-  set(WITH_RUBY ON)
+option(BUILD_RUBY_BINDING "build ruby binding" ON)
+if(BUILD_RUBY_BINDING AND NOT WITH_C_BINDING)
+  message(WARNING "Ruby binding depends on C binding, but C binding is not enabled")
+endif()
+if(NOT BUILD_RUBY_BINDING OR NOT BUILD_C_BINDING)
+  set(WITH_RUBY_BINDING OFF)
+else()
+  find_program(GEM_EXECUTABLE gem)
+  set(WITH_RUBY_BINDING OFF)
+  if(GEM_EXECUTABLE AND WITH_C_BINDING)
+    set(GEM_COMMAND ${RUBY_EXECUTABLE} ${GEM_EXECUTABLE})
+    set(WITH_RUBY_BINDING ON)
+  endif()
+endif()
+
+################################################################################
+# RocksDB
+################################################################################
+
+set(WITH_ROCKSDB ON CACHE BOOL "Build with experimental RocksDB support")
+ # PORTABLE flag for RockdDB changed as of this PR (with v8.3.2 and after): https://github.com/facebook/rocksdb/pull/11419
+ # https://github.com/facebook/rocksdb/blob/v8.6.7/CMakeLists.txt#L256
+set(PORTABLE_ROCKSDB 1 CACHE STRING "Minimum CPU arch to support (i.e. skylake, haswell, etc., or 0 = current CPU, 1 = baseline CPU)")
+set(ROCKSDB_TOOLS OFF CACHE BOOL "Compile RocksDB tools")
+set(WITH_LIBURING OFF CACHE BOOL "Build with liburing enabled") # Set this to ON to include liburing
+# RocksDB version/commit configuration is in cmake/RocksDBVersion.cmake
+
+################################################################################
+# TOML11
+################################################################################
+
+# TOML can download and install itself into the binary directory, so it should
+# always be available.
+find_package(toml11 3.4.0)
+if(toml11_FOUND)
+  message(STATUS "Using TOML11 from system")
+  add_library(toml11_target INTERFACE)
+  target_link_libraries(toml11_target INTERFACE toml11)
+else()
+  include(ExternalProject)
+  ExternalProject_add(toml11Project
+    URL "https://github.com/ToruNiina/toml11/archive/v3.4.0.tar.gz"
+    URL_HASH SHA256=bc6d733efd9216af8c119d8ac64a805578c79cc82b813e4d1d880ca128bd154d
+    CMAKE_CACHE_ARGS
+      -DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}
+      -DCMAKE_C_COMPILER:FILEPATH=${CMAKE_C_COMPILER}
+      -DCMAKE_CXX_COMPILER:FILEPATH=${CMAKE_CXX_COMPILER}
+      -DCMAKE_INSTALL_PREFIX:PATH=${CMAKE_CURRENT_BINARY_DIR}/toml11
+      -Dtoml11_BUILD_TEST:BOOL=OFF
+    BUILD_ALWAYS ON)
+  add_library(toml11_target INTERFACE)
+  add_dependencies(toml11_target toml11Project)
+  target_include_directories(toml11_target SYSTEM INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/toml11/include)
+endif()
+
+################################################################################
+# Coroutine implementation
+################################################################################
+
+set(DEFAULT_COROUTINE_IMPL boost)
+if(WIN32)
+  # boost coroutine not available in windows build environment for now.
+  set(DEFAULT_COROUTINE_IMPL libcoro)
+elseif(NOT APPLE AND NOT USE_ASAN AND CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^x86")
+  # revert to libcoro for x86 linux while we investigate a performance regression
+  set(DEFAULT_COROUTINE_IMPL libcoro)
+endif()
+
+set(COROUTINE_IMPL ${DEFAULT_COROUTINE_IMPL} CACHE STRING "Which coroutine implementation to use. Options are boost and libcoro")
+
+################################################################################
+# AWS SDK
+################################################################################
+
+set(BUILD_AWS_BACKUP OFF CACHE BOOL "Build AWS S3 SDK backup client")
+if (BUILD_AWS_BACKUP)
+  set(WITH_AWS_BACKUP ON)
+else()
+  set(WITH_AWS_BACKUP OFF)
+endif()
+
+################################################################################
+
+set(WITH_GRPC ON CACHE BOOL "Build FDB with gRPC support")
+
+if (WITH_GRPC)
+  # Setup search paths.
+  if (UNIX AND CMAKE_CXX_COMPILER_ID MATCHES "Clang$" AND USE_LIBCXX)
+    list(APPEND CMAKE_PREFIX_PATH /opt/grpc_clang)
+    message(STATUS "Using Clang version of gRPC")
+  else ()
+    list(APPEND CMAKE_PREFIX_PATH /opt/grpc)
+    message(STATUS "Using g++ version of gRPC")
+  endif ()
+
+  # Find dependencies for gRPC.
+  find_program(PROTOC_EXECUTABLE protoc
+    HINTS ${CMAKE_PREFIX_PATH}
+    PATH_SUFFIXES bin 
+  )
+  if (PROTOC_EXECUTABLE)
+    execute_process(
+      COMMAND ${PROTOC_EXECUTABLE} --version
+      OUTPUT_VARIABLE PROTOC_VERSION
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    string(REGEX MATCH "([0-9]+\\.[0-9]+)+" PROTOC_VERSION ${PROTOC_VERSION})
+    message(STATUS "protoc version: ${PROTOC_COMPILER} ${PROTOC_VERSION}")
+
+    if (PROTOC_VERSION VERSION_LESS "29.0")
+      message(WARNING "protoc version ${PROTOC_VERSION} is too old. Required: 29.0+")
+      set(PROTOC_EXECUTABLE NOTFOUND)
+    endif()
+  else ()
+    message(WARNING "protoc executable not found")
+  endif()
+
+  find_package(absl CONFIG)
+  find_package(utf8_range CONFIG)
+  find_package(protobuf CONFIG)
+  find_package(gRPC CONFIG)
+
+  if (PROTOC_EXECUTABLE AND gRPC_FOUND)
+    message(STATUS "gRPC found. Enabling gRPC for Flow.")
+    add_compile_definitions(FLOW_GRPC_ENABLED)
+  else()
+    message(WARNING "gRPC can't be enabled because of missing dependencies")
+    set(WITH_GRPC OFF)
+  endif()
 endif()
 
 file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/packages)
@@ -88,17 +369,25 @@ function(print_components)
   message(STATUS "=========================================")
   message(STATUS "   Components Build Overview ")
   message(STATUS "=========================================")
-  message(STATUS "Build Java Bindings:                  ${WITH_JAVA}")
-  message(STATUS "Build with TLS support:               ${WITH_TLS}")
-  message(STATUS "Build Go bindings:                    ${WITH_GO}")
-  message(STATUS "Build Ruby bindings:                  ${WITH_RUBY}")
-  message(STATUS "Build Python sdist (make package):    ${WITH_PYTHON}")
+  message(STATUS "Build Bindings (depends on Python):   ${WITH_PYTHON}")
+  message(STATUS "Build C Bindings:                     ${WITH_C_BINDING}")
+  message(STATUS "Build Python Bindings:                ${WITH_PYTHON_BINDING}")
+  message(STATUS "Build Java Bindings:                  ${WITH_JAVA_BINDING}")
+  message(STATUS "Build Go bindings:                    ${WITH_GO_BINDING}")
+  message(STATUS "Build Swift bindings:                 ${WITH_SWIFT_BINDING}")
+  message(STATUS "Build Ruby bindings:                  ${WITH_RUBY_BINDING}")
+  message(STATUS "Build Swift (depends on Swift):       ${WITH_SWIFT}")
   message(STATUS "Build Documentation (make html):      ${WITH_DOCUMENTATION}")
+  message(STATUS "Build Python sdist (make package):    ${WITH_PYTHON_BINDING}")
+  message(STATUS "Configure CTest (depends on Python):  ${WITH_PYTHON}")
+  message(STATUS "Build with RocksDB:                   ${WITH_ROCKSDB}")
+  message(STATUS "Build with AWS SDK:                   ${WITH_AWS_BACKUP}")
+  message(STATUS "Build with gRPC:                      ${WITH_GRPC}")
   message(STATUS "=========================================")
 endfunction()
 
 if(FORCE_ALL_COMPONENTS)
-  if(NOT WITH_JAVA OR NOT WITH_TLS OR NOT WITH_GO OR NOT WITH_RUBY OR NOT WITH_PYTHON OR NOT WITH_DOCUMENTATION)
+  if(NOT WITH_C_BINDING OR NOT WITH_JAVA_BINDING OR NOT WITH_GO_BINDING OR NOT WITH_RUBY_BINDING OR NOT WITH_PYTHON_BINDING OR NOT WITH_DOCUMENTATION)
     print_components()
     message(FATAL_ERROR "FORCE_ALL_COMPONENTS is set but not all dependencies could be found")
   endif()

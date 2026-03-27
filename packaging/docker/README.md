@@ -1,71 +1,32 @@
-# Overview
+# packaging/docker
 
-This directory provides a Docker image for running FoundationDB.
+This directory contains the pieces for building FoundationDB docker images.
 
-The image in this directory is based on Ubuntu 18.04, but the commands and
-scripts used to build it should be suitable for most other distros with small
-tweaks to the installation of dependencies.
+`build-images.sh` will optionally take a single parameter that will be used as an
+image tag postfix.
 
-The image relies on the following dependencies:
+For more details it is best to read the `build-images.sh` shell script itself to
+learn more about how the images are built.
 
-*	bash
-*	wget
-*	dig
-*	glibc
+For details about what is in the images, peruse `Dockerfile`
 
-# Build Configuration
+the `samples` directory is out of date, and anything therein should be used with
+the expectation that it is, at least, partially (if not entirely) incorrect.
 
-This image supports several build arguments for build-time configuration.
+## Building images locally without the script
 
-### FDB_VERSION
+If you only want to build a custom container image based on an already released FDB version you run the following command from the root:
 
-The version of FoundationDB to install in the container. This is required.
+```bash
+export REGISTRY=docker.io
+export FDB_VERSION=7.3.63
+docker build --build-arg FDB_VERSION=${FDB_VERSION} -t ${REGISTRY}/foundationdb/fdb-kubernetes-monitor:${FDB_VERSION} --target fdb-kubernetes-monitor -f ./packaging/docker/Dockerfile .
+```
 
-### FDB_WEBSITE
+Or if you want to build the `foundationdb` image and not the `fdb-kubernetes-monitor`:
 
-The base URL for the FoundationDB website. The default is
-`https://www.foundationdb.org`.
-
-### FDB_ADDITIONAL_VERSIONS
-
-A list of additional client library versions to include in this image. These
-libraries will be in a special multiversion library folder.
-
-# Runtime Configuration
-
-This image supports several environment variables for run-time configuration.
-
-### FDB_PORT
-
-The port that FoundationDB should bind to. The default is 4500. 
-
-### FDB_NETWORKING_MODE
-
-A networking mode that controls what address FoundationDB listens on. If this
-is `container` (the default), then the server will listen on its public IP
-within the docker network, and will only be accessible from other containers.
-
-If this is `host`, then the server will listen on `127.0.0.1`, and will not be
-accessible from other containers. You should use `host` networking mode if you
-want to access your container from your host machine, and you should also
-map the port to the same port on your host machine when you run the container.
-
-### FDB_COORDINATOR
-
-A name of another FDB instance to use as a coordinator process. This can be
-helpful when setting up a larger cluster inside a docker network, for instance
-when using Docker Compose. The name you provide must be resolvable through the
-DNS on the container you are running.
-
-# Copying Into Other Images
-
-You can also use this image to provide files for images that are clients of a
-FoundationDB cluster, by using the `from` argument of the `COPY` command. Some
-files you may want to copy are:
-
-*	`/usr/lib/libfdb_c.so`: The primary FoundationDB client library
-*	`/usr/lib/fdb/multiversion/libfdb_*.so`: Additional versions of the client
-	library, which you can use if you are setting up a multiversion client.
-*	`/var/fdb/scripts/create_cluster_file.bash`: A script for setting up the
-	cluster file based on an `FDB_COORDINATOR` environment variable.
-*	`/usr/bin/fdbcli`: The FoundationDB CLI.
+```bash
+export REGISTRY=docker.io
+export FDB_VERSION=7.3.63
+docker build --build-arg FDB_VERSION=${FDB_VERSION} -t ${REGISTRY}/foundationdb/foundationdb:${FDB_VERSION} --target foundationdb -f ./packaging/docker/Dockerfile .
+```

@@ -27,16 +27,16 @@ System requirements
   * Or, an unsupported Linux distribution with:
 
     * Kernel version between 2.6.33 and 3.0.x (inclusive) or 3.7 or greater
-    * Works with .deb or .rpm packages
+    * Preferably .deb or .rpm package support
   
   * Or, macOS 10.7 or later
   
-  .. warning:: The macOS version of the FoundationDB server is intended for use on locally accessible development machines only. Other uses are not supported.
+  .. warning:: The macOS and Windows versions of the FoundationDB server are intended for use on locally accessible development machines only. Other uses are not supported.
   
 * 4GB **ECC** RAM (per fdbserver process)
 * Storage
 
-  * SSDs are required when storing data sets larger than memory (using the ``ssd`` storage engine).
+  * SSDs are required when storing data sets larger than memory (using the ``ssd`` or ``ssd-redwood-v1`` or ``ssd-rocksdb-v1`` storage engine).
   * HDDs are OK when storing data sets smaller than memory (using the ``memory`` storage engine).
   * For more information, see :ref:`configuration-configuring-storage-subsystem`.
 
@@ -199,14 +199,12 @@ The ``foundationdb.conf`` file contains several sections, detailed below. Note t
     ## foundationdb.conf 
     ##
     ## Configuration file for FoundationDB server processes 
-    ## Full documentation is available in the FoundationDB Administration document.
 
     [fdbmonitor]
-    restart_delay = 60
     user = foundationdb
     group = foundationdb
 
-Contains basic configuration parameters of the ``fdbmonitor`` process. ``restart_delay`` specifies the number of seconds that ``fdbmonitor`` waits before restarting a failed process. ``user`` and ``group`` are used on Linux systems to control the privilege level of child processes.
+Contains basic configuration parameters of the ``fdbmonitor`` process. ``user`` and ``group`` are used on Linux systems to control the privilege level of child processes.
 
 ``[general]`` section
 -----------------------
@@ -214,9 +212,48 @@ Contains basic configuration parameters of the ``fdbmonitor`` process. ``restart
 .. code-block:: ini
 
     [general]
-    cluster_file = /etc/foundationdb/fdb.cluster
+    cluster-file = /etc/foundationdb/fdb.cluster
+    restart-delay = 60
+    ## restart-backoff and restart-delay-reset-interval default to the value that is used for restart-delay
+    # initial-restart-delay = 0
+    # restart-backoff = 60.0
+    # restart-delay-reset-interval = 60
+    # envvars = FOO=BAR BAZ=FOO
+    # delete-envvars =
+    # kill-on-configuration-change = true
+    # disable-lifecycle-logging = false
 
-Contains settings applicable to all processes (e.g. fdbserver, backup_agent). The main setting of interest is ``cluster_file``, which specifies the location of the cluster file. This file and the directory that contains it must be writable by all processes (i.e. by the user or group set in the [fdbmonitor] section).
+Contains settings applicable to all processes (e.g. fdbserver, backup_agent).
+
+* ``cluster-file``: Specifies the location of the cluster file. This file and the directory that contains it must be writable by all processes (i.e. by the user or group set in the ``[fdbmonitor]`` section).
+* ``envvars``: A space separated list of environment variables to be added to child processes' environment variables. Every environment variable in the list must be of the form ``A=B`` where ``A`` and ``B`` are key and value names respectively.
+* ``delete-envvars``: A space separated list of environment variables to remove from the environments of child processes. This can be used if the ``fdbmonitor`` process needs to be run with environment variables that are undesired in its children. This takes precedence over envvars field.
+* ``kill-on-configuration-change``: If ``true``, affected processes will be restarted whenever the configuration file changes. Defaults to ``true``.
+* ``disable-lifecycle-logging``: If ``true``, ``fdbmonitor`` will not write log events when processes start or terminate. Defaults to ``false``.
+
+.. _configuration-restarting:
+
+The ``[general]`` section also contains some parameters to control how processes are restarted when they die. ``fdbmonitor`` uses backoff logic to prevent a process that dies repeatedly from cycling too quickly, and it also introduces up to +/-10% random jitter into the delay to avoid multiple processes all restarting simultaneously. ``fdbmonitor`` tracks separate backoff state for each process, so the restarting of one process will have no effect on the backoff behavior of another.
+
+* ``restart-delay``: The maximum number of seconds (subject to jitter) that fdbmonitor will delay before restarting a failed process.
+* ``initial-restart-delay``: The number of seconds ``fdbmonitor`` waits to restart a process the first time it dies. Defaults to 0 (i.e. the process gets restarted immediately). 
+* ``restart-backoff``: Controls how quickly ``fdbmonitor`` backs off when a process dies repeatedly. The previous delay (or 1, if the previous delay is 0) is multiplied by ``restart-backoff`` to get the next delay, maxing out at the value of ``restart-delay``. Defaults to the value of ``restart-delay``, meaning that the second and subsequent failures will all delay ``restart-delay`` between restarts.
+* ``restart-delay-reset-interval``: The number of seconds a process must be running before resetting the backoff back to the value of ``initial-restart-delay``. Defaults to the value of ``restart-delay``.
+
+ These ``restart-`` parameters are not applicable to the ``fdbmonitor`` process itself. See :ref:`Configuring autorestart of fdbmonitor <configuration-restart-fdbmonitor>` for details.
+
+As an example, let's say the following parameters have been set:
+
+.. code-block:: ini
+
+    restart-delay = 60
+    initial-restart-delay = 0
+    restart-backoff = 2.0
+    restart-delay-reset-interval = 180
+
+The progression of delays for a process that fails repeatedly would be ``0, 2, 4, 8, 16, 32, 60, 60, ...``, each subject to a 10% random jitter. After the process stays alive for 180 seconds, the backoff would reset and the next failure would restart the process immediately.
+
+Using the default parameters, a process will restart immediately if it fails and then delay ``restart-delay`` seconds if it fails again within ``restart-delay`` seconds. 
 
 .. _foundationdb-conf-fdbserver:
 
@@ -228,41 +265,46 @@ Contains settings applicable to all processes (e.g. fdbserver, backup_agent). Th
     ## Default parameters for individual fdbserver processes
     [fdbserver]
     command = /usr/sbin/fdbserver
-    public_address = auto:$ID
-    listen_address = public
+    public-address = auto:$ID
+    listen-address = public
     datadir = /var/lib/foundationdb/data/$ID
     logdir = /var/log/foundationdb
     # logsize = 10MiB
     # maxlogssize = 100MiB
     # class = 
     # memory = 8GiB
-    # storage_memory = 1GiB
-    # locality_machineid = 
-    # locality_zoneid = 
-    # locality_data_hall = 
-    # locality_dcid = 
-    # io_trust_seconds = 20
+    # memory-vsize =
+    # storage-memory = 1GiB
+    # cache-memory = 2GiB
+    # locality-machineid =
+    # locality-zoneid =
+    # locality-data-hall =
+    # locality-dcid =
+    # io-trust-seconds = 20
 
-Contains default parameters for all fdbserver processes on this machine. These same options can be overridden for individual processes in their respective ``[fdbserver.<ID>]`` sections. In this section, the ID of the individual fdbserver can be substituted by using the ``$ID`` variable in the value. For example, ``public_address = auto:$ID`` makes each fdbserver listen on a port equal to its ID.
+Contains default parameters for all fdbserver processes on this machine. These same options can be overridden for individual processes in their respective ``[fdbserver.<ID>]`` sections. In this section, the ID of the individual fdbserver can be substituted by using the ``$ID`` variable in the value. For example, ``public-address = auto:$ID`` makes each fdbserver listen on a port equal to its ID.
 
 .. note:: |multiplicative-suffixes|
 .. note:: In general locality id's are used to specify the location of processes which in turn is used to determine fault and replication domains.
 
 * ``command``: The location of the ``fdbserver`` binary.
-* ``public_address``: The publicly visible IP:Port of the process. If ``auto``, the address will be the one used to communicate with the coordination servers.
-* ``listen_address``: The IP:Port that the server socket should bind to. If ``public``, it will be the same as the public_address.
+* ``public-address``: The publicly visible IP:Port of the process. If ``auto``, the address will be the one used to communicate with the coordination servers.
+* ``listen-address``: The IP:Port that the server socket should bind to. If ``public``, it will be the same as the public-address.
 * ``datadir``: A writable directory (by root or by the user set in the [fdbmonitor] section) where persistent data files will be stored.
 * ``logdir``: A writable directory (by root or by the user set in the [fdbmonitor] section) where FoundationDB will store log files.
 * ``logsize``: Roll over to a new log file after the current log file reaches the specified size. The default value is 10MiB.
 * ``maxlogssize``: Delete the oldest log file when the total size of all log files exceeds the specified size. If set to 0B, old log files will not be deleted. The default value is 100MiB.
 * ``class``: Process class specifying the roles that will be taken in the cluster. Recommended options are ``storage``, ``transaction``, ``stateless``. See :ref:`guidelines-process-class-config` for process class config recommendations.
-* ``memory``: Maximum memory used by the process. The default value is 8GiB. When specified without a unit, MiB is assumed. This parameter does not change the memory allocation of the program. Rather, it sets a hard limit beyond which the process will kill itself and be restarted. The default value of 8GiB is double the intended memory usage in the default configuration (providing an emergency buffer to deal with memory leaks or similar problems). It is *not* recommended to decrease the value of this parameter below its default value. It may be *increased* if you wish to allocate a very large amount of storage engine memory or cache. In particular, when the ``storage_memory`` parameter is increased, the ``memory`` parameter should be increased by an equal amount.
-* ``storage_memory``: Maximum memory used for data storage. This parameter is used *only* with memory storage engine, not the ssd storage engine. The default value is 1GiB. When specified without a unit, MB is assumed. Clusters will be restricted to using this amount of memory per process for purposes of data storage. Memory overhead associated with storing the data is counted against this total. If you increase the ``storage_memory``, you should also increase the ``memory`` parameter by the same amount.
-* ``locality_machineid``: Machine identifier key. All processes on a machine should share a unique id. By default, processes on a machine determine a unique id to share. This does not generally need to be set.
-* ``locality_zoneid``: Zone identifier key.  Processes that share a zone id are considered non-unique for the purposes of data replication. If unset, defaults to machine id.
-* ``locality_dcid``: Datacenter identifier key. All processes physically located in a datacenter should share the id. No default value. If you are depending on datacenter based replication this must be set on all processes.
-* ``locality_data_hall``: Data hall identifier key. All processes physically located in a data hall should share the id. No default value. If you are depending on data hall based replication this must be set on all processes.
-* ``io_trust_seconds``: Time in seconds that a read or write operation is allowed to take before timing out with an error. If an operation times out, all future operations on that file will fail with an error as well. Only has an effect when using AsyncFileKAIO in Linux. If unset, defaults to 0 which means timeout is disabled.
+* ``memory``: Maximum resident memory used by the process. The default value is 8GiB. When specified without a unit, MiB is assumed. Setting to 0 means unlimited. This parameter does not change the memory allocation of the program. Rather, it sets a hard limit beyond which the process will kill itself and be restarted. The default value of 8GiB is double the intended memory usage in the default configuration (providing an emergency buffer to deal with memory leaks or similar problems). It is *not* recommended to decrease the value of this parameter below its default value. It may be *increased* if you wish to allocate a very large amount of storage engine memory or cache. In particular, when the ``storage-memory``  or ``cache-memory`` parameters are increased, the ``memory`` parameter should be increased by an equal amount.
+* ``memory-vsize``: Maximum virtual memory used by the process. The default value is 0, which means unlimited. When specified without a unit, MiB is assumed. Same as ``memory``, this parameter does not change the memory allocation of the program. Rather, it sets a hard limit beyond which the process will kill itself and be restarted.
+* ``storage-memory``: Maximum memory used for data storage. This parameter is used *only* with memory storage engine, not with the other storage engines. The default value is 1GiB. When specified without a unit, MB is assumed. Clusters will be restricted to using this amount of memory per process for purposes of data storage. Memory overhead associated with storing the data is counted against this total. If you increase the ``storage-memory`` parameter, you should also increase the ``memory`` parameter by the same amount.
+* ``cache-memory``: Maximum memory used for caching pages from disk. The default value is 2GiB. When specified without a unit, MiB is assumed. If you increase the ``cache-memory`` parameter, you should also increase the ``memory`` parameter by the same amount.
+* ``locality-machineid``: Machine identifier key. All processes on a machine should share a unique id. By default, processes on a machine determine a unique id to share. This does not generally need to be set.
+* ``locality-zoneid``: Zone identifier key.  Processes that share a zone id are considered non-unique for the purposes of data replication. If unset, defaults to machine id.
+* ``locality-dcid``: Datacenter identifier key. All processes physically located in a datacenter should share the id. No default value. If you are depending on datacenter based replication this must be set on all processes.
+* ``locality-data-hall``: Data hall identifier key. All processes physically located in a data hall should share the id. No default value. If you are depending on data hall based replication this must be set on all processes.
+* ``io-trust-seconds``: Time in seconds that a read or write operation is allowed to take before timing out with an error. If an operation times out, all future operations on that file will fail with an error as well. Only has an effect when using AsyncFileKAIO in Linux. If unset, defaults to 0 which means timeout is disabled.
+* ``parentpid``: Die if the process ID of its parent differs from the one given.  The argument should always be ``$PID``, which will be substituted with the process ID of fdbmonitor.  Using this parameter will cause all fdbserver processes started by fdbmonitor to die if fdbmonitor is killed.
 
 .. note:: In addition to the options above, TLS settings as described for the :ref:`TLS plugin <configuring-tls>` can be specified in the [fdbserver] section.
 
@@ -283,19 +325,37 @@ Backup agent sections
 .. code-block:: ini
 
     [backup_agent]
-    command = /usr/lib/foundationdb/backup_agent/backup_agent
+    command = /usr/bin/backup_agent
     
     [backup_agent.1]
 
 These sections run and configure the backup agent process used for :doc:`point-in-time backups <backups>` of FoundationDB. These don't usually need to be modified. The structure and functionality is similar to the ``[fdbserver]`` and ``[fdbserver.<ID>]`` sections.
 
+.. _configuration-restart-fdbmonitor:
+
+Configuring autorestart of fdbmonitor
+=====================================
+
+Configuring the restart parameters for ``fdbmonitor`` is operating system-specific.
+
+Linux (RHEL/CentOS)
+-------------------
+
+ ``systemd`` controls the ``foundationdb`` service. When ``fdbmonitor`` is killed unexpectedly, by default, systemd restarts it in 60 seconds. To adjust this value you have to create a file ``/etc/systemd/system/foundationdb.service.d/override.conf`` with the overriding values. For example:
+
+.. code-block:: ini
+
+    [Service]
+    RestartSec=20s
+
+To disable auto-restart of ``fdbmonitor``, put ``Restart=no`` in the same section.
 
 .. _configuration-choosing-redundancy-mode:
 
 Choosing a redundancy mode
 ==========================
 
-FoundationDB supports a variety of redundancy modes. These modes define storage requirements, required cluster size, and resilience to failure. To change the redundancy mode, use the ``configure`` command ``fdbcli``. For example::
+FoundationDB supports a variety of redundancy modes. These modes define storage requirements, required cluster size, and resilience to failure. To change the redundancy mode, use the ``configure`` command of ``fdbcli``. For example::
 
     user@host$ fdbcli
     Using cluster file `/etc/foundationdb/fdb.cluster'.
@@ -316,19 +376,19 @@ Single datacenter modes
 +==============================+==+=================+=================+================+
 | Best for                     |  | 1-2 machines    | 3-4 machines    | 5+ machines    | 
 +------------------------------+--+-----------------+-----------------+----------------+
-| Replication                  |  | 1 copy          | 2 copy          | 3 copy         |
+| Total Replicas               |  | 1 copy          | 2 copies        | 3 copies       |
 +------------------------------+--+-----------------+-----------------+----------------+
-| # live machines              |  |                 |                 |                |
+| Live machines required       |  |                 |                 |                |
 | to make progress             |  | 1               | 2               | 3              |
 +------------------------------+--+-----------------+-----------------+----------------+
-| Minimum # of machines        |  |                 |                 |                |
+| Required machines            |  |                 |                 |                |
 | for fault tolerance          |  | impossible      | 3               | 4              |
 +------------------------------+--+-----------------+-----------------+----------------+
-| Ideal # of                   |  |                 |                 |                |
+| Ideal number of              |  |                 |                 |                |
 | coordination servers         |  | 1               | 3               | 5              |
 +------------------------------+--+-----------------+-----------------+----------------+
-| # simultaneous failures      |  |                 |                 |                |
-| after which data may be lost |  | any machine     | 2+ machines     | 3+ machines    |
+| Simultaneous failures        |  |                 |                 |                |
+| after which data may be lost |  | any process     | 2+ machines     | 3+ machines    |
 +------------------------------+--+-----------------+-----------------+----------------+
 
 In the three single datacenter redundancy modes, FoundationDB replicates data across the required number of machines in the cluster, but without aiming for datacenter redundancy. Although machines may be placed in more than one datacenter, the cluster will not be tolerant of datacenter-correlated failures. 
@@ -354,15 +414,20 @@ FoundationDB will never use processes on the same machine for the replication of
 
     FoundationDB replicates data to three machines, and at least three available machines are required to make progress. This is the recommended mode for a cluster of five or more machines in a single datacenter.
 
+    .. note:: When running in cloud environments with managed disks that are already replicated and persistent, ``double`` replication may still be considered for 5+ machine clusters.  This will result in lower availability fault tolerance for planned or unplanned failures and lower total read throughput, but offers a reasonable tradeoff for cost.
+
 ``three_data_hall`` mode
     FoundationDB stores data in triplicate, with one copy on a storage server in each of three data halls. The transaction logs are replicated four times, with two data halls containing two replicas apiece. Four available machines (two in each of two data halls) are therefore required to make progress. This configuration enables the cluster to remain available after losing a single data hall and one machine in another data hall.
+
+``three_data_hall_fallback`` mode
+    FoundationDB stores data in duplicate, with one copy each on a storage server in two of three data halls. The transaction logs are replicated four times, with two data halls containing two replicas apiece. Four available machines (two in each of two data halls) are therefore required to make progress. This configuration is similar to ``three_data_hall``, differing only in that data is stored on two instead of three replicas. This configuration is useful to unblock data distribution when a data hall becomes temporarily unavailable. Because ``three_data_hall_fallback`` reduces the redundancy level to two, it should only be used as a temporary measure to restore cluster health during a datacenter outage.
 
 Datacenter-aware mode
 ---------------------
 
 In addition to the more commonly used modes listed above, this version of FoundationDB has support for redundancy across multiple datacenters.
 
-    .. note:: When using the datacenter-aware mode, all ``fdbserver`` processes should be passed a valid datacenter identifier on the command line.
+.. note:: When using the datacenter-aware mode, all ``fdbserver`` processes should be passed a valid datacenter identifier on the command line.
 
 ``three_datacenter`` mode
     *(for 5+ machines in 3 datacenters)*
@@ -390,9 +455,9 @@ Configuring the storage subsystem
 Storage engines
 ---------------
 
-A storage engine is the part of the database that is responsible for storing data to disk. FoundationDB has two storage engines options, ``ssd`` and ``memory``.
+A storage engine is the part of the database that is responsible for storing data to disk. FoundationDB has four storage engines options, ``ssd``, ``ssd-redwood-v1``, ``ssd-rocksdb-v1`` and ``memory``.
 
-For both storage engines, FoundationDB commits transactions to disk with the number of copies indicated by the redundancy mode before reporting them committed. This procedure guarantees the *durability* needed for full ACID compliance. At the point of the commit, FoundationDB may have only *logged* the transaction, deferring the work of updating the disk representation. This deferral has significant advantages for latency and burst performance. Due to this deferral, it is possible for disk space usage to continue increasing after the last commit.
+For all storage engines, FoundationDB commits transactions to disk with the number of copies indicated by the redundancy mode before reporting them committed. This procedure guarantees the *durability* needed for full ACID compliance. At the point of the commit, FoundationDB may have only *logged* the transaction, deferring the work of updating the disk representation. This deferral has significant advantages for latency and burst performance. Due to this deferral, it is possible for disk space usage to continue increasing after the last commit.
 
 To change the storage engine, use the ``configure`` command of ``fdbcli``. For example::
 
@@ -432,6 +497,20 @@ To change the storage engine, use the ``configure`` command of ``fdbcli``. For e
     By default, each process using the memory storage engine is limited to storing 1 GB of data (including overhead). This limit can be changed using the ``storage_memory`` parameter as documented in :ref:`foundationdb.conf <foundationdb-conf>`.
 	
     When using the ``memory`` engine, especially with a larger memory limit, it can take some time (seconds to minutes) for a storage machine to start up. This is because it needs to reconstruct its in-memory data structure from the logs stored on disk.
+
+.. _configuration-storage-engine-redwood:
+
+``ssd-redwood-v1`` storage engine
+    *(optimized for SSD storage)*
+
+    Data is stored on disk in B-tree data structures optimized for use on :ref:`SSDs <ssd-info>`. This is an improved version of the SSD storage engine SQLite, expected to offer higher throughput and lower write amplification depending on the workload.
+
+.. _configuration-storage-engine-rocksdb:
+
+``ssd-rocksdb-v1`` storage engine
+    *(optimized for SSD storage)*
+
+    Data is stored on disk using LSM-tree (Log-Structured Merge Tree) data structures optimized for use on :ref:SSDs <ssd-info>. Data can be compressed and undergoes regular compaction, optimizing storage efficiency and reducing read amplification. RocksDB’s extensive tuning options allow the storage engine to be customized for both workload characteristics and hardware configurations.
 
 Storage locations
 ---------------------
@@ -530,25 +609,25 @@ The second feature is the ability to add one or more synchronous replicas of the
 
 An example configuration would be four total datacenters, two on the east coast, two on the west coast, with a preference for fast write latencies from the west coast. One datacenter on each coast would be sized to store a full copy of the data. The second datacenter on each coast would only have a few FoundationDB processes.
 
-While everything is healthy, writes need to be made durable in both west coast datacenters before a commit can succeed. The geographic proximity of the two datacenters minimizes the additional commit latency. Reads can be served from either region, and clients can get data from whichever region is closer. Getting a read version from the each coast region will still require communicating with a west coast datacenter. Clients can cache read versions if they can tolerate reading stale data to avoid waiting on read versions.
+While everything is healthy, writes need to be made durable in both west coast datacenters before a commit can succeed. The geographic proximity of the two datacenters minimizes the additional commit latency. Reads can be served from either region, and clients can get data from whichever region is closer. Getting a read version from east coast region will still require communicating with a west coast datacenter. Clients can cache read versions if they can tolerate reading stale data to avoid waiting on read versions.
 
 If either west coast datacenter fails, the last few mutations will be propagated from the remaining west coast datacenter to the east coast. At this point, FoundationDB will start accepting commits on the east coast. Once the west coast comes back online, the system will automatically start copying all the data that was committed to the east coast back to the west coast replica. Once the west coast has caught up, the system will automatically switch back to accepting writes from the west coast again.
 
-The west coast mutation logs will maintain their copies of all committed mutations until they have been applied by the east coast datacenter.  In the event that the east coast has failed for long enough that the west coast mutation logs no longer have enough disk space to continue storing the mutations, FoundationDB can be requested to drop the east coast replica completely. This decision is not automatic, and requires a manual change to the configuration. The west coast database will then act as a single datacenter database until the east coast comes back online. Because the east coast datacenter was completely dropped from the configuration, to bring the west coast back online FoundationDB will have to copy all the data between the regions.
+The west coast mutation logs will maintain their copies of all committed mutations until they have been applied by the east coast datacenter.  In the event that the east coast has failed for long enough that the west coast mutation logs no longer have enough disk space to continue storing the mutations, FoundationDB can be requested to drop the east coast replica completely. This decision is not automatic, and requires a manual change to the configuration. The west coast database will then act as a single datacenter database until the east coast comes back online. Because the east coast datacenter was completely dropped from the configuration, FoundationDB will have to copy all the data between the regions in order to bring it back online.
 
 If a region failover occurs, clients will generally only see a latency spike of a few seconds.
 
 Specifying datacenters
 ----------------------
 
-To use region configurations all processes in the cluster need to specify in which datacenter they are located. This can be done on the command line with either ``--locality_dcid`` or ``--datacenter_id``. This datacenter identifier is case sensitive.
+To use region configurations all processes in the cluster need to specify in which datacenter they are located. This can be done on the command line with either ``--locality-dcid`` or ``--datacenter-id``. This datacenter identifier is case sensitive.
 
-Clients should also specify their datacenter with the database option ``datacenter_id``. If a client does not specify their datacenter, they will use latency estimates to balance traffic between the two regions. This will result in about 5% of requests being served by the remote regions, so reads will suffer from high tail latencies.
+Clients should also specify their datacenter with the database option ``datacenter-id``. If a client does not specify their datacenter, they will use latency estimates to balance traffic between the two regions. This will result in about 5% of requests being served by the remote regions, so reads will suffer from high tail latencies.
 
 Changing the region configuration
 ---------------------------------
 
-To change the region configure, use the ``fileconfigure`` command ``fdbcli``. For example::
+To change the region configuration, use the ``fileconfigure`` command ``fdbcli``. For example::
 
     user@host$ fdbcli
     Using cluster file `/etc/foundationdb/fdb.cluster'.
@@ -566,7 +645,8 @@ Regions are configured in FoundationDB as a json document. For example::
         "datacenters":[{
             "id":"WC1",
             "priority":1,
-            "satellite":1
+            "satellite":1,
+            "satellite_logs":2
         }],
         "satellite_redundancy_mode":"one_satellite_double",
         "satellite_logs":2
@@ -588,23 +668,23 @@ The ``satellite_redundancy_mode`` is configured per region, and specifies how ma
 
 ``one_satellite_single`` mode
 
-    Keep one copy of the mutation log in the satellite datacenter with the highest priority. If the highest priority satellite is unavailable it will put the transaction log in the satellite datacenter with the next highest priority.
+Keep one copy of the mutation log in the satellite datacenter with the highest priority. If the highest priority satellite is unavailable it will put the transaction log in the satellite datacenter with the next highest priority.
 
 ``one_satellite_double`` mode
 
-    Keep two copies of the mutation log in the satellite datacenter with the highest priority.
+Keep two copies of the mutation log in the satellite datacenter with the highest priority.
 
 ``one_satellite_triple`` mode
 
-    Keep three copies of the mutation log in the satellite datacenter with the highest priority.
+Keep three copies of the mutation log in the satellite datacenter with the highest priority.
 
 ``two_satellite_safe`` mode
 
-    Keep two copies of the mutation log in each of the two satellite datacenters with the highest priorities, for a total of four copies of each mutation. This mode will protect against the simultaneous loss of both the primary and one of the satellite datacenters. If only one satellite is available, it will fall back to only storing two copies of the mutation log in the remaining datacenter.
+Keep two copies of the mutation log in each of the two satellite datacenters with the highest priorities, for a total of four copies of each mutation. This mode will protect against the simultaneous loss of both the primary and one of the satellite datacenters. If only one satellite is available, it will fall back to only storing two copies of the mutation log in the remaining datacenter.
 
 ``two_satellite_fast`` mode
 
-    Keep two copies of the mutation log in each of the two satellite datacenters with the highest priorities, for a total of four copies of each mutation. FoundationDB will only synchronously wait for one of the two satellite datacenters to make the mutations durable before considering a commit successful. This will reduce tail latencies caused by network issues between datacenters. If only one satellite is available, it will fall back to only storing two copies of the mutation log in the remaining datacenter.
+Keep two copies of the mutation log in each of the two satellite datacenters with the highest priorities, for a total of four copies of each mutation. FoundationDB will only synchronously wait for one of the two satellite datacenters to make the mutations durable before considering a commit successful. This will reduce tail latencies caused by network issues between datacenters. If only one satellite is available, it will fall back to only storing two copies of the mutation log in the remaining datacenter.
 
 .. warning:: In release 6.0 this is implemented by waiting for all but 2 of the transaction logs. If ``satellite_logs`` is set to more than 4, FoundationDB will still need to wait for replies from both datacenters.
 
@@ -615,7 +695,7 @@ The number of replicas in each region is controlled by redundancy level. For exa
 Asymmetric configurations
 -------------------------
 
-The fact that satellite policies are configured per region allows for asymmetric configurations. For example, FoudnationDB can have a three datacenter setup where there are two datacenters on the west coast (WC1, WC2) and one datacenter on the east coast (EC1). The west coast region can be set as the preferred active region by setting the priority of its primary datacenter higher than the east coast datacenter. The west coast region should have a satellite policy configured, so that when it is active, FoundationDB is making mutations durable in both west coast datacenters. In the rare event that one of the west coast datacenter have failed, FoundationDB will fail over to the east coast datacenter. Because this region does not a satellite datacenter, the mutations will only be made durable in one datacenter while the transaction subsystem is located here. However this is justifiable because the region will only be active if a datacenter has already been lost.
+The fact that satellite policies are configured per region allows for asymmetric configurations. For example, FoundationDB can have a three datacenter setup where there are two datacenters on the west coast (WC1, WC2) and one datacenter on the east coast (EC1). The west coast region can be set as the preferred active region by setting the priority of its primary datacenter higher than the east coast datacenter. The west coast region should have a satellite policy configured, so that when it is active, FoundationDB is making mutations durable in both west coast datacenters. In the rare event that one of the west coast datacenters has failed, FoundationDB will fail over to the east coast datacenter. Because this region does not have a satellite datacenter, the mutations will only be made durable in one datacenter while the transaction subsystem is located here. However, this is justifiable because the region will only be active if a datacenter has already been lost.
 
 This is the region configuration that implements the example::
 
@@ -626,7 +706,8 @@ This is the region configuration that implements the example::
         },{
             "id":"WC2",
             "priority":0,
-            "satellite":1
+            "satellite":1,
+            "satellite_logs":2
         }],
         "satellite_redundancy_mode":"one_satellite_double"
     },{
@@ -643,7 +724,7 @@ The ``usable_regions`` configuration option determines the number of regions whi
 
 .. warning:: In release 6.0, ``usable_regions`` can only be configured to the values of ``1`` or ``2``, and a maximum of 2 regions can be defined in the ``regions`` json object.
 
-Increasing the ``usable_regions`` will start copying data from the active region to the remote region. Reducing the ``usable_regions`` will immediately drop the replicas in the remote region. During these changes, only one primary datacenter can have priority >= 0. This enforces exactly which region will lose its replica.
+Increasing the ``usable_regions`` will start copying data from the active region to the remote region. Reducing the ``usable_regions`` will drop the replicas in the remote region (on data distributor noticing the configuration change and marking the remote region's replicas as "undesired"). During these changes, only one primary datacenter can have priority >= 0. This enforces exactly which region will lose its replica.
 
 Changing the log routers configuration
 --------------------------------------
@@ -661,17 +742,17 @@ Migrating a database to use a region configuration
 
 To configure an existing database to regions, do the following steps:
 
-    1. Ensure all processes have their dcid locality set on the command line. All processes should exist in the same datacenter. If converting from a ``three_datacenter`` configuration, first configure down to using a single datacenter by changing the replication mode. Then exclude the machines in all datacenters but the one that will become the initial active region.
+1. Ensure all processes have their dcid locality set on the command line. All processes should exist in the same datacenter. If converting from a ``three_datacenter`` configuration, first configure down to using a single datacenter by changing the replication mode. Then exclude the machines in all datacenters but the one that will become the initial active region.
 
-    2. Configure the region configuration. The datacenter with all the existing processes should have a non-negative priority. The region which will eventually store the remote replica should be added with a negative priority.
+2. Configure the region configuration. The datacenter with all the existing processes should have a non-negative priority. The region which will eventually store the remote replica should be added with a negative priority.
 
-    3. Add processes to the cluster in the remote region. These processes will not take data yet, but need to be added to the cluster. If they are added before the region configuration is set they will be assigned data like any other FoundationDB process, which will lead to high latencies.
+3. Add processes to the cluster in the remote region. These processes will not take data yet, but need to be added to the cluster. If they are added before the region configuration is set they will be assigned data like any other FoundationDB process, which will lead to high latencies.
 
-    4. Configure ``usable_regions=2``. This will cause the cluster to start copying data between the regions.
+4. Configure ``usable_regions=2``. This will cause the cluster to start copying data between the regions.
 
-    5. Watch ``status`` and wait until data movement is complete. This will mean signal that the remote datacenter has a full replica of all of the data in the database.
+5. Watch ``status`` and wait until data movement is complete. This will signal that the remote datacenter has a full replica of all of the data in the database.
 
-    6. Change the region configuration to have a non-negative priority for the primary datacenters in both regions. This will enable automatic failover between regions.
+6. Change the region configuration to have a non-negative priority for the primary datacenters in both regions. This will enable automatic failover between regions.
 
 Handling datacenter failures
 ----------------------------
@@ -680,28 +761,23 @@ When a primary datacenter fails, the cluster will go into a degraded state. It w
 
 .. warning:: While a datacenter has failed, the maximum write throughput of the cluster will be roughly 1/3 of normal performance. This is because the transaction logs need to store all of the mutations being committed, so that once the other datacenter comes back online, it can replay history to catch back up.
 
-To drop the dead datacenter do the follow steps:
+To drop the dead datacenter do the following steps:
 
-    1. Configure the region configuration so that the dead datacenter has a negative priority.
+1. Configure the region configuration so that the dead datacenter has a negative priority.
 
-    2. Configure ``usable_regions=1``.
+2. Configure ``usable_regions=1``.
 
 If you are running in a configuration without a satellite datacenter, or you have lost all machines in a region simultaneously, the ``force_recovery_with_data_loss`` command from ``fdbcli`` allows you to force a recovery to the other region.  This will discard the portion of the mutation log which did not make it across the WAN. Once the database has recovered, immediately follow the previous steps to drop the dead region the normal way.
-
-.. warning:: In 6.0 the ``force_recovery_with_data_loss`` command from ``fdbcli`` can cause data inconsistencies if it is used when processes from both non-satellite datacenters are still in the cluster. In general this command has not be tested to same degree as the rest of the codebase, and should only be used in extreme emergencies.
 
 Region change safety
 --------------------
 
 The steps described above for both adding and removing replicas are enforced by ``fdbcli``. The following are the specific conditions checked by ``fdbcli``:
 
-    * You cannot change the ``regions`` configuration while also changing ``usable_regions``.
-
-    * You can only change ``usable_regions`` when exactly one region has priority >= 0.
-
-    * When ``usable_regions`` > 1, all regions with priority >= 0 must have a full replica of the data.
-
-    * All storage servers must be in one of the regions specified by the region configuration.
+* You cannot change the ``regions`` configuration while also changing ``usable_regions``.
+* You can only change ``usable_regions`` when exactly one region has priority >= 0.
+* When ``usable_regions`` > 1, all regions with priority >= 0 must have a full replica of the data.
+* All storage servers must be in one of the regions specified by the region configuration.
 
 Monitoring
 ----------
@@ -735,31 +811,27 @@ Region configuration is better in almost all ways than the ``three_datacenter`` 
 Known limitations
 -----------------
 
-The 6.0 release still has a number of rough edges related to region configuration. This is a collection of all the issues that have been pointed out in the sections above. These issues should be significantly improved in future releases of FoundationDB:
+The 6.2 release still has a number of rough edges related to region configuration. This is a collection of all the issues that have been pointed out in the sections above. These issues should be significantly improved in future releases of FoundationDB:
 
-    * FoundationDB supports replicating data to at most two regions.
-
-    * ``two_satellite_fast`` does not hide latency properly when configured with more than 4 satellite transaction logs.
-
-    * While a datacenter has failed, the maximum write throughput of the cluster will be roughly 1/3 of normal performance.
-
-    * ``force_recovery_with_data_loss`` can cause data inconsistencies if it is used when processes from both non-satellite datacenters are still in the cluster.
+* FoundationDB supports replicating data to at most two regions.
+* ``two_satellite_fast`` does not hide latency properly when configured with more than 4 satellite transaction logs.
 
 .. _guidelines-process-class-config:
 
 Guidelines for setting process class
 ====================================
 
-In a FoundationDB cluster, each of the ``fdbserver`` processes perform different tasks. Each process is recruited to do a particular task based on its process ``class``. For example, processes with ``class=storage`` are given preference to be recruited for doing storage server tasks, ``class=transaction`` are for log server processes and ``class=stateless`` are for stateless processes like proxies, resolvers, etc.,
+In a FoundationDB cluster, each of the ``fdbserver`` processes perform different tasks. Each process is recruited to do a particular task based on its process ``class``. For example, processes with ``class=storage`` are given preference to be recruited for doing storage server tasks, ``class=transaction`` are for log server processes and ``class=stateless`` are for stateless processes like commit proxies, resolvers, etc.,
 
-The recommended minimum number of ``class=transaction`` (log server) processes is 8 (active) + 2 (standby) and the recommended minimum number for ``class=stateless`` processes is 4 (proxy) + 1 (resolver) + 1 (cluster controller) + 1 (master) + 2 (standby). It is better to spread the transaction and stateless processes across as many machines as possible.
+The recommended minimum number of ``class=transaction`` (log server) processes is 8 (active) + 2 (standby) and the recommended minimum number for ``class=stateless`` processes is 1 (GRV proxy) + 3 (commit proxy) + 1 (resolver) + 1 (cluster controller) + 1 (master) + 2 (standby). It is better to spread the transaction and stateless processes across as many machines as possible.
 
 ``fdbcli`` is used to set the desired number of processes of a particular process type. To do so, you would issue the ``fdbcli`` commands::
 
-  fdb> configure proxies=5
+  fdb> configure grv_proxies=1
+  fdb> configure grv_proxies=4
   fdb> configure logs=8
 
-.. note:: In the present release, the default value for proxies and log servers is 3 and for resolvers is 1. You should not set the value of a process type to less than its default.
+.. note:: In the present release, the default value for commit proxies and log servers is 3 and for GRV proxies and resolvers is 1. You should not set the value of a process type to less than its default.
 
 .. warning:: The conflict-resolution algorithm used by FoundationDB is conservative: it guarantees that no conflicting transactions will be committed, but it may fail to commit some transactions that theoretically could have been. The effects of this conservatism may increase as you increase the number of resolvers. It is therefore important to employ the recommended techniques for :ref:`minimizing conflicts <developer-guide-transaction-conflicts>` when increasing the number of resolvers.
 

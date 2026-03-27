@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ import com.apple.foundationdb.Transaction;
 public class WatchTest {
 
 	public static void main(String[] args) {
-		FDB fdb = FDB.selectAPIVersion(610);
+		FDB fdb = FDB.selectAPIVersion(TestApiVersion.CURRENT);
 		try(Database database = fdb.open(args[0])) {
 			database.options().setLocationCacheSize(42);
 			try(Transaction tr = database.createTransaction()) {

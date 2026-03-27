@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -112,6 +112,7 @@ namespace actorcompiler
     class IfStatement : Statement
     {
         public string expression;
+        public bool constexpr;
         public Statement ifBody;
         public Statement elseBody;  // might be null
         public override bool containsWait()
@@ -223,18 +224,23 @@ namespace actorcompiler
 
     class Actor
     {
+        public List<string> attributes = new List<string>();
         public string returnType;
         public string name;
+        public string enclosingClass = null;
         public VarDeclaration[] parameters;
         public VarDeclaration[] templateFormals;  //< null if not a template
         public CodeBlock body;
         public int SourceLine;
         public bool isStatic = false;
-        public bool isUncancellable = false;
+        private bool isUncancellable;
         public string testCaseParameters = null;
         public string nameSpace = null;
         public bool isForwardDeclaration = false;
         public bool isTestCase = false;
+
+        public bool IsCancellable() { return returnType != null && !isUncancellable; }
+        public void SetUncancellable() { isUncancellable = true; }
     };
 
     class Descr

@@ -32,7 +32,7 @@
 
 <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
   <Product Name='$(var.Title)'
-           Id='{A4228020-2D9B-43FA-B3AE-4EE6297105F5}'
+           Id='{144B7C35-2E42-4DF4-8829-C8218E3D98F0}'
            UpgradeCode='{A95EA002-686E-4164-8356-C715B7F8B1C8}'
            Version='$(var.Version)'
            Manufacturer='$(var.Manufacturer)'
@@ -104,6 +104,8 @@
               <Component Id='FDBCLibraryHeader' Guid='{32D846FA-3BA8-4CF6-8777-51DFA1011198}' Win64='yes'>
                 <File Id='FDBCH' Name='fdb_c.h' DiskId='1' Source='$(var.SolutionRoot)bindings\c\foundationdb\fdb_c.h' KeyPath='yes'/>
                 <File Id='FDBCOPTIONSH' Name='fdb_c_options.g.h' DiskId='1' Source='$(var.SolutionRoot)bindings\c\foundationdb\fdb_c_options.g.h'/>
+                <File Id='FDBCTYPES' Name='fdb_c_types.h' DiskId='1' Source='$(var.SolutionRoot)bindings\c\foundationdb\fdb_c_types.h' KeyPath='yes'/>
+                <File Id='FDBCINTERNAL' Name='fdb_c_internal.h' DiskId='1' Source='$(var.SolutionRoot)bindings\c\foundationdb\fdb_c_internal.h'/>
                 <File Id='FDBOPTIONSFILE' Name='fdb.options' DiskId='1' Source='$(var.SolutionRoot)fdbclient\vexillographer\fdb.options'/>
               </Component>
             </Directory>
@@ -134,13 +136,13 @@
             </Component>
 
             <Component Id='FDBCRegistryValue' Guid='{6ED940F3-75C8-4385-97D9-D7D0F211B17D}'>
-              <RegistryKey Root='HKLM' Key='SOFTWARE\$(var.Manufacturer)\KeyValue\Client' Action='createAndRemoveOnUninstall'>
+              <RegistryKey Root='HKLM' Key='SOFTWARE\$(var.Manufacturer)\KeyValue\Client' >
                 <RegistryValue Name='Version' Type='string' Value='$(var.Version)' KeyPath='yes' />
               </RegistryKey>
             </Component>
 
             <Component Id='FDBSRegistryValue' Guid='{361A9B4A-A06F-4BFB-AFEA-B5F733C8BFDF}'>
-              <RegistryKey Root='HKLM' Key='SOFTWARE\$(var.Manufacturer)\KeyValue\Server' Action='createAndRemoveOnUninstall'>
+              <RegistryKey Root='HKLM' Key='SOFTWARE\$(var.Manufacturer)\KeyValue\Server' >
                 <RegistryValue Name='Version' Type='string' Value='$(var.Version)' KeyPath='yes' />
               </RegistryKey>
             </Component>
@@ -268,7 +270,6 @@
                   <File Id='FDBPY$(var.PyVer)TUPLE' Name='tuple.py' DiskId='1' Source='$(var.PyPath)tuple.py' KeyPath='no'/>
                   <File Id='FDBPY$(var.PyVer)DIR' Name='directory_impl.py' DiskId='1' Source='$(var.PyPath)directory_impl.py' KeyPath='no'/>
                   <File Id='FDBPY$(var.PyVer)SUBS' Name='subspace_impl.py' DiskId='1' Source='$(var.PyPath)subspace_impl.py' KeyPath='no'/>
-                  <File Id='FDBPY$(var.PyVer)SIX' Name='six.py' DiskId='1' Source='$(var.PyPath)six.py' KeyPath='no'/>
                   <RemoveFile Id="Purge$(var.PyVer)PYC" Name="*.pyc" On="uninstall" />
                   <RemoveFile Id="Purge$(var.PyVer)PYO" Name="*.pyo" On="uninstall" />
                   <RemoveFile Id="Purge$(var.PyVer)Cache" Directory="PyTarget$(var.PyVer)CacheDir" Name="*.*" On="uninstall" />

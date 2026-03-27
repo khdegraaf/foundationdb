@@ -15,15 +15,15 @@
  There is no way to take snapshot. There is no way to record KV Ranges for the complete key space at a given version. For
  a keyspace a-z, its not possible to record KV range (a-z, v0), if keyspace a-z is not small enough. Instead, we can record
  KV ranges {(a-b, v0), (c-d, v1), (e-f, v2) ... (y-z, v10)}. With mutation log recorded all along, we can still use
- the simple backup-restore scheme described above on sub keyspaces seperately. Assuming we did record mutation log from
+ the simple backup-restore scheme described above on sub keyspaces separately. Assuming we did record mutation log from
  v0 to vn, that allows us to restore
-  
+
 * Keyspace a-b to any version between v0 and vn
 * Keyspace c-d to any version between v1 and vn
 * Keyspace y-z to any version between v10 and vn
 
 But, we are not interested in restoring sub keyspaces, we want to restore a-z. Well, we can restore a-z, to any
-version between v10 and vn by restoring individual sub spaces seperately.
+version between v10 and vn by restoring individual sub spaces separately.
 
 #### Key Value Ranges
 
@@ -47,7 +47,7 @@ take the same example
 
 Restoring to version vk (v10 < vk <= vn), needs KV ranges to be restored first and then replaying mutation logs. For
 each KV range (k1-k2, vx) that is restored we need to replay mutation log [(k1-k2, vx+1), .., (k1-k2, vk)]. But, this
-needs scanning complete muation log to get mutaions for k1-k2, that is sub-optimal, for any decent sized database
+needs scanning complete mutation log to get mutations for k1-k2, that is sub-optimal, for any decent sized database
 this will take forever.
 
 Instead looking at restore on key space, we can replay events on version space, that way we need to scan
@@ -116,3 +116,17 @@ With the above backup scenario, we could restore to any version from c to d or g
 Instead of going through the pain of monitoring for backup becoming too large and restarting backup, we could just
 have backup running continuously with KVrange task restarting once in a while (with some policy of course). 
 The code for continuous has already committed. The document will be added in the future.
+
+#### S3 Checksumming and Data Integrity
+
+FoundationDB implements checksum verification for S3 backup operations to ensure data integrity during upload and download. When `BLOBSTORE_ENABLE_OBJECT_INTEGRITY_CHECK` is enabled (default), the system uses SHA256 checksums for stronger cryptographic verification compared to MD5.
+
+**Key Features:**
+- **Upload Verification**: SHA256 checksums are calculated and sent with each part upload, verified by AWS S3
+- **Download Verification**: Different strategies based on file size and access pattern
+- **Multipart Support**: Proper handling of AWS S3 multipart upload checksum requirements
+- **Consistent Implementation**: Both low-level S3BlobStore and high-level AsyncFileS3BlobStore use SHA256
+
+**Important AWS S3 Limitation**: Range requests (used by backup restore operations) cannot use S3 checksum verification due to AWS limitations. However, FoundationDB's internal checksums still provide data integrity protection.
+
+For detailed information about S3 checksumming implementation, troubleshooting, and best practices, see `design/s3-checksumming.md`.

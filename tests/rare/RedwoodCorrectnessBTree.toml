@@ -1,0 +1,11 @@
+[[test]]
+testTitle = 'UnitTests'
+useDB = false
+startDelay = 0
+
+    [[test.workload]]
+    testName = 'UnitTests'
+    maxTestCases = 1
+    testsMatching = 'Lredwood/correctness/btree'
+    maxRunTimeWallTime = 250.0
+    maxRunTimeSanitizerModeWallTime = 800.0

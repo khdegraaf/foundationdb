@@ -1,0 +1,16 @@
+# High priority number decreases the chance to run this test.
+# Priority 1.0 is the default in TestHarness2
+testPriority = '20'
+
+[[test]]
+testTitle = 'CycleTestWithKills'
+
+    [[test.workload]]
+    testName = 'Cycle'
+    transactionsPerSecond = 2500.0
+    testDuration = 30.0
+    expectedRate = 0
+
+    [[test.workload]]
+    testName = 'Attrition'
+    testDuration = 30.0

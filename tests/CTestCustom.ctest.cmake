@@ -1,0 +1,1 @@
+set(CTEST_CUSTOM_PRE_TEST ${CTEST_CUSTOM_PRE_TEST} "@Python3_EXECUTABLE@ @PROJECT_SOURCE_DIR@/tests/TestRunner/fdb_test_runner/TestDirectory.py @PROJECT_BINARY_DIR@")

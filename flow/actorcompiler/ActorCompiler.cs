@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,12 @@
  * limitations under the License.
  */
 
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.IO;
+using System.Security.Cryptography;
 
 namespace actorcompiler
 {
@@ -83,34 +84,70 @@ namespace actorcompiler
         public bool endIsUnreachable = false;
         public string exceptionParameterIs = null;
         public bool publicName = false;
+        public string specifiers;
         string indentation;
         StreamWriter body;
         public bool wasCalled { get; protected set; }
+        public Function overload = null;
 
         public Function()
         {
             body = new StreamWriter(new MemoryStream());
         }
 
+        public void setOverload(Function overload) {
+            this.overload = overload;
+        }
+
+        public Function popOverload() {
+            Function result = this.overload;
+            this.overload = null;
+            return result;
+        }
+
+        public void addOverload(params string[] formalParameters) {
+            setOverload(
+                new Function {
+                    name = name,
+                    returnType = returnType,
+                    endIsUnreachable = endIsUnreachable,
+                    formalParameters = formalParameters,
+                    indentation = indentation
+                }
+            );
+        }
+
         public void Indent(int change)
         {
             for(int i=0; i<change; i++) indentation += '\t';
             if (change < 0) indentation = indentation.Substring(-change);
+            if (overload != null) {
+                overload.Indent(change);
+            }
         }
 
         public void WriteLineUnindented(string s)
         {
             body.WriteLine(s);
+            if (overload != null) {
+                overload.WriteLineUnindented(s);
+            }
         }
         public void WriteLine(string line)
         {
             body.Write(indentation);
             body.WriteLine(line);
+            if (overload != null) {
+                overload.WriteLine(line);
+            }
         }
         public void WriteLine(string line, params object[] args)
         {
             body.Write(indentation);
             body.WriteLine(line, args);
+            if (overload != null) {
+                overload.WriteLine(line, args);
+            }
         }
 
         public string BodyText
@@ -213,26 +250,25 @@ namespace actorcompiler
         public void Write(TextWriter writer, out int lines)
         {
             lines = 0;
-            //if (isTopLevel) writer.WriteLine("namespace {");
 
             writer.WriteLine(memberIndentStr + "template<> struct Descriptor<struct {0}> {{", descr.name);
-            writer.WriteLine(memberIndentStr + "\tstatic StringRef typeName() {{ return LiteralStringRef(\"{0}\"); }}", descr.name);
-            writer.WriteLine(memberIndentStr + "\ttypedef {0} type;", descr.name);
+            writer.WriteLine(memberIndentStr + "\tstatic StringRef typeName() {{ return \"{0}\"_sr; }}", descr.name);
+            writer.WriteLine(memberIndentStr + "\tusing type = {0};", descr.name);
             lines += 3;
 
             foreach (var dec in descr.body)
             {
                 writer.WriteLine(memberIndentStr + "\tstruct {0}Descriptor {{", dec.name);
-                writer.WriteLine(memberIndentStr + "\t\tstatic StringRef name() {{ return LiteralStringRef(\"{0}\"); }}", dec.name);
-                writer.WriteLine(memberIndentStr + "\t\tstatic StringRef typeName() {{ return LiteralStringRef(\"{0}\"); }}", dec.type);
-                writer.WriteLine(memberIndentStr + "\t\tstatic StringRef comment() {{ return LiteralStringRef(\"{0}\"); }}", dec.comment);
-                writer.WriteLine(memberIndentStr + "\t\ttypedef {0} type;", dec.type);
+                writer.WriteLine(memberIndentStr + "\t\tstatic StringRef name() {{ return \"{0}\"_sr; }}", dec.name);
+                writer.WriteLine(memberIndentStr + "\t\tstatic StringRef typeName() {{ return \"{0}\"_sr; }}", dec.type);
+                writer.WriteLine(memberIndentStr + "\t\tstatic StringRef comment() {{ return \"{0}\"_sr; }}", dec.comment);
+                writer.WriteLine(memberIndentStr + "\t\tusing type = {0};", dec.type);
                 writer.WriteLine(memberIndentStr + "\t\tstatic inline type get({0}& from);", descr.name);
                 writer.WriteLine(memberIndentStr + "\t};");
                 lines += 7;
             }
 
-            writer.Write(memberIndentStr + "\ttypedef std::tuple<");
+            writer.Write(memberIndentStr + "\tusing fields = std::tuple<");
             bool FirstDesc = true;
             foreach (var dec in descr.body)
             {
@@ -241,8 +277,8 @@ namespace actorcompiler
                 writer.Write("{0}Descriptor", dec.name);
                 FirstDesc = false;
             }
-            writer.Write("> fields;\n");
-            writer.WriteLine(memberIndentStr + "\ttypedef make_index_sequence_impl<0, index_sequence<>, std::tuple_size<fields>::value>::type field_indexes;");
+            writer.Write(">;\n");
+            writer.WriteLine(memberIndentStr + "\tusing field_indexes = make_index_sequence_impl<0, index_sequence<>, std::tuple_size<fields>::value>::type;");
             writer.WriteLine(memberIndentStr + "};");
             if(descr.superClassList != null)
                 writer.WriteLine(memberIndentStr + "struct {0} : {1} {{", descr.name, descr.superClassList);
@@ -265,7 +301,6 @@ namespace actorcompiler
                 lines++;
             }
 
-            //if (isTopLevel) writer.WriteLine("}");  // namespace
         }
     }
 
@@ -285,44 +320,152 @@ namespace actorcompiler
         bool LineNumbersEnabled;
         int chooseGroups = 0, whenCount = 0;
         string This;
+        bool generateProbes;
+        public Dictionary<(ulong, ulong), string> uidObjects { get; private set; }
 
-        public ActorCompiler(Actor actor, string sourceFile, bool isTopLevel, bool lineNumbersEnabled)
+        public ActorCompiler(Actor actor, string sourceFile, bool isTopLevel, bool lineNumbersEnabled, bool generateProbes)
         {
             this.actor = actor;
             this.sourceFile = sourceFile;
             this.isTopLevel = isTopLevel;
             this.LineNumbersEnabled = lineNumbersEnabled;
-
-            if (actor.returnType == null)
-                actor.isUncancellable = true;
+            this.generateProbes = generateProbes;
+            this.uidObjects = new Dictionary<(ulong, ulong), string>();
 
             FindState();
         }
+
+        private ulong ByteToLong(byte[] bytes) {
+            // NOTE: Always assume big endian.
+            ulong result = 0;
+            foreach(var b in bytes) {
+                result += b;
+                result <<= 8;
+            }
+            return result;
+        }
+
+        // Generates the identifier for the ACTOR
+        private Tuple<ulong, ulong> GetUidFromString(string str) {
+            byte[] sha256Hash = SHA256.Create().ComputeHash(Encoding.UTF8.GetBytes(str));
+            byte[] first = sha256Hash.Take(8).ToArray();
+            byte[] second = sha256Hash.Skip(8).Take(8).ToArray();
+            return new Tuple<ulong, ulong>(ByteToLong(first), ByteToLong(second));
+        }
+
+        // Writes the function that returns the Actor object
+        private void WriteActorFunction(TextWriter writer, string fullReturnType) {
+            WriteTemplate(writer);
+            LineNumber(writer, actor.SourceLine);
+            foreach (string attribute in actor.attributes) {
+                writer.Write(attribute + " ");
+            }
+            if (actor.isStatic) writer.Write("static ");
+            writer.WriteLine("{0} {3}{1}( {2} ) {{", fullReturnType, actor.name, string.Join(", ", ParameterList()), actor.nameSpace==null ? "" : actor.nameSpace + "::");
+            LineNumber(writer, actor.SourceLine);
+
+            string newActor = string.Format("new {0}({1})",
+                    fullClassName,
+                    string.Join(", ", actor.parameters.Select(p => p.name).ToArray()));
+
+            if (actor.returnType != null)
+                writer.WriteLine("\treturn Future<{1}>({0});", newActor, actor.returnType);
+            else
+                writer.WriteLine("\t{0};", newActor);
+            writer.WriteLine("}");
+        }
+
+        // Writes the class of the Actor object
+        private void WriteActorClass(TextWriter writer, string fullStateClassName, Function body) {
+            // The final actor class mixes in the State class, the Actor base class and all callback classes
+            writer.WriteLine("// This generated class is to be used only via {0}()", actor.name);
+            WriteTemplate(writer);
+            LineNumber(writer, actor.SourceLine);
+
+            string callback_base_classes = string.Join(", ", callbacks.Select(c=>string.Format("public {0}", c.type)));
+            if (callback_base_classes != "") callback_base_classes += ", ";
+            writer.WriteLine("class {0} final : public Actor<{2}>, {3}public FastAllocated<{1}>, public {4} {{",
+                className,
+                fullClassName,
+                actor.returnType == null ? "void" : actor.returnType,
+                callback_base_classes,
+                fullStateClassName
+                );
+            writer.WriteLine("public:");
+            writer.WriteLine("\tusing FastAllocated<{0}>::operator new;", fullClassName);
+            writer.WriteLine("\tusing FastAllocated<{0}>::operator delete;", fullClassName);
+
+            var actorIdentifierKey = this.sourceFile + ":" + this.actor.name;
+            var actorIdentifier = GetUidFromString(actorIdentifierKey);
+            uidObjects.Add((actorIdentifier.Item1, actorIdentifier.Item2), actorIdentifierKey);
+            // NOTE UL is required as a u64 postfix for large integers, otherwise Clang would complain
+            writer.WriteLine("\tstatic constexpr ActorIdentifier __actorIdentifier = UID({0}UL, {1}UL);", actorIdentifier.Item1, actorIdentifier.Item2);
+            writer.WriteLine("\tActiveActorHelper activeActorHelper;");
+
+            writer.WriteLine("#pragma clang diagnostic push");
+            writer.WriteLine("#pragma clang diagnostic ignored \"-Wdelete-non-virtual-dtor\"");
+            if (actor.returnType != null)
+                writer.WriteLine(@"    void destroy() override {{
+        activeActorHelper.~ActiveActorHelper();
+        static_cast<Actor<{0}>*>(this)->~Actor();
+        operator delete(this);
+    }}", actor.returnType);
+            else
+                writer.WriteLine(@"    void destroy() {{
+        activeActorHelper.~ActiveActorHelper();
+        static_cast<Actor<void>*>(this)->~Actor();
+        operator delete(this);
+    }}");
+            writer.WriteLine("#pragma clang diagnostic pop");
+
+            foreach (var cb in callbacks)
+                writer.WriteLine("friend struct {0};", cb.type);
+
+            LineNumber(writer, actor.SourceLine);
+            WriteConstructor(body, writer, fullStateClassName);
+            WriteCancelFunc(writer);
+            writer.WriteLine("};");
+
+        }
+
         public void Write(TextWriter writer)
         {
             string fullReturnType =
                 actor.returnType != null ? string.Format("Future<{0}>", actor.returnType)
                 : "void";
-            if (actor.isForwardDeclaration) {
-                if (actor.isStatic) writer.Write("static ");
-                writer.WriteLine("{0} {3}{1}( {2} );", fullReturnType, actor.name, string.Join(", ", ParameterList()), actor.nameSpace==null ? "" : actor.nameSpace + "::");
-                return;
-            }
             for (int i = 0; ; i++)
             {
-                className = string.Format("{0}{1}Actor{2}",
+                className = string.Format("{3}{0}{1}Actor{2}",
                     actor.name.Substring(0, 1).ToUpper(),
                     actor.name.Substring(1),
-                    i!=0 ? i.ToString() : "");
-                if (usedClassNames.Add(className))
+                    i != 0 ? i.ToString() : "",
+                      actor.enclosingClass != null && actor.isForwardDeclaration ? actor.enclosingClass.Replace("::", "_") + "_"
+                    : actor.nameSpace != null                                    ? actor.nameSpace.Replace("::", "_") + "_"
+                    : "");
+                if (actor.isForwardDeclaration || usedClassNames.Add(className))
                     break;
             }
 
+            // e.g. SimpleTimerActor
             fullClassName = className + GetTemplateActuals();
             var actorClassFormal = new VarDeclaration { name = className, type = "class" };
             This = string.Format("static_cast<{0}*>(this)", actorClassFormal.name);
+            // e.g. SimpleTimerActorState
             stateClassName = className + "State";
+            // e.g. SimpleTimerActorState<SimpleTimerActor>
             var fullStateClassName = stateClassName + GetTemplateActuals(new VarDeclaration { type = "class", name = fullClassName });
+
+            if (actor.isForwardDeclaration) {
+                foreach (string attribute in actor.attributes) {
+                    writer.Write(attribute + " ");
+                }
+                if (actor.isStatic) writer.Write("static ");
+                writer.WriteLine("{0} {3}{1}( {2} );", fullReturnType, actor.name, string.Join(", ", ParameterList()), actor.nameSpace==null ? "" : actor.nameSpace + "::");
+                if (actor.enclosingClass != null) {
+                    writer.WriteLine("template <class> friend class {0};", stateClassName);
+                }
+                return;
+            }
 
             var body = getFunction("", "body", loopDepth0);
             var bodyContext = new Context { 
@@ -351,7 +494,7 @@ namespace actorcompiler
             }
             bodyContext.catchFErr.WriteLine("loopDepth = 0;");
 
-            if (isTopLevel) writer.WriteLine("namespace {");
+            if (isTopLevel && actor.nameSpace == null) writer.WriteLine("namespace {");
 
             // The "State" class contains all state and user code, to make sure that state names are accessible to user code but
             // inherited members of Actor, Callback etc are not.
@@ -362,6 +505,7 @@ namespace actorcompiler
             writer.WriteLine("public:");
             LineNumber(writer, actor.SourceLine);
             WriteStateConstructor(writer);
+            WriteStateDestructor(writer);
             WriteFunctions(writer);
             foreach (var st in state)
             {
@@ -370,55 +514,49 @@ namespace actorcompiler
             }
             writer.WriteLine("};");
 
-            // The final actor class mixes in the State class, the Actor base class and all callback classes
-            writer.WriteLine("// This generated class is to be used only via {0}()", actor.name);
-            WriteTemplate(writer);
-            LineNumber(writer, actor.SourceLine);
+            WriteActorClass(writer, fullStateClassName, body);
 
-            string callback_base_classes = string.Join(", ", callbacks.Select(c=>string.Format("public {0}", c.type)));
-            if (callback_base_classes != "") callback_base_classes += ", ";
-            writer.WriteLine("class {0} : public Actor<{2}>, {3}public FastAllocated<{1}>, public {4} {{",
-                className,
-                fullClassName,
-                actor.returnType == null ? "void" : actor.returnType,
-                callback_base_classes,
-                fullStateClassName
-                );
-            writer.WriteLine("public:");
-            writer.WriteLine("\tusing FastAllocated<{0}>::operator new;", fullClassName);
-            writer.WriteLine("\tusing FastAllocated<{0}>::operator delete;", fullClassName);
-            writer.WriteLine("\tvirtual void destroy() {{ ((Actor<{0}>*)this)->~Actor(); operator delete(this); }}", actor.returnType == null ? "void" : actor.returnType);
-            foreach (var cb in callbacks)
-                writer.WriteLine("friend struct {0};", cb.type);
+            if (isTopLevel && actor.nameSpace == null) writer.WriteLine("} // namespace"); // namespace
 
-            LineNumber(writer, actor.SourceLine);
-            WriteConstructor(body, writer, fullStateClassName);
-            //WriteStartFunc(body, writer);
-            WriteCancelFunc(writer);
-            writer.WriteLine("};");
-            if (isTopLevel) writer.WriteLine("}");  // namespace
-            WriteTemplate(writer);
-            LineNumber(writer, actor.SourceLine);
-            if (actor.isStatic) writer.Write("static ");
-            writer.WriteLine("{0} {3}{1}( {2} ) {{", fullReturnType, actor.name, string.Join(", ", ParameterList()), actor.nameSpace==null ? "" : actor.nameSpace + "::");
-            LineNumber(writer, actor.SourceLine);
-
-            string newActor = string.Format("new {0}({1})", 
-                    fullClassName,
-                    string.Join(", ", actor.parameters.Select(p => p.name).ToArray()));
-
-            if (actor.returnType != null)
-                writer.WriteLine("\treturn Future<{1}>({0});", newActor, actor.returnType);
-            else
-                writer.WriteLine("\t{0};", newActor);
-            writer.WriteLine("}");
+            WriteActorFunction(writer, fullReturnType);
 
             if (actor.testCaseParameters != null)
             {
                 writer.WriteLine("ACTOR_TEST_CASE({0}, {1})", actor.name, actor.testCaseParameters);
             }
 
-            Console.WriteLine("\tCompiled ACTOR {0} (line {1})", actor.name, actor.SourceLine);
+            // Console.WriteLine("\tCompiled ACTOR {0} (line {1})", actor.name, actor.SourceLine);
+        }
+
+        const string thisAddress = "reinterpret_cast<unsigned long>(this)";
+
+        void ProbeEnter(Function fun, string name, int index = -1) {
+            if (generateProbes) {
+                fun.WriteLine("fdb_probe_actor_enter(\"{0}\", {1}, {2});", name, thisAddress, index);
+            }
+            var blockIdentifier = GetUidFromString(fun.name);
+            fun.WriteLine("#ifdef WITH_ACAC");
+            fun.WriteLine("static constexpr ActorBlockIdentifier __identifier = UID({0}UL, {1}UL);", blockIdentifier.Item1, blockIdentifier.Item2);
+            fun.WriteLine("ActorExecutionContextHelper __helper(static_cast<{0}*>(this)->activeActorHelper.actorID, __identifier);", className);
+            fun.WriteLine("#endif // WITH_ACAC");
+        }
+
+        void ProbeExit(Function fun, string name, int index = -1) {
+            if (generateProbes) {
+                fun.WriteLine("fdb_probe_actor_exit(\"{0}\", {1}, {2});", name, thisAddress, index);
+            }
+        }
+
+        void ProbeCreate(Function fun, string name) {
+            if (generateProbes) {
+                fun.WriteLine("fdb_probe_actor_create(\"{0}\", {1});", name, thisAddress);
+            }
+        }
+
+        void ProbeDestroy(Function fun, string name) {
+            if (generateProbes) {
+                fun.WriteLine("fdb_probe_actor_destroy(\"{0}\", {1});", name, thisAddress);
+            }
         }
 
         void LineNumber(TextWriter writer, int SourceLine)
@@ -544,7 +682,7 @@ namespace actorcompiler
                 {
                     LineNumber(cx.target, stmt.FirstSourceLine);
                     if (stmt.decl.initializerConstructorSyntax || stmt.decl.initializer=="")
-                        cx.target.WriteLine("{0} = std::move( {1}({2}) );", stmt.decl.name, stmt.decl.type, stmt.decl.initializer);
+                        cx.target.WriteLine("{0} = {1}({2});", stmt.decl.name, stmt.decl.type, stmt.decl.initializer);
                     else
                         cx.target.WriteLine("{0} = {1};", stmt.decl.name, stmt.decl.initializer);
                 }
@@ -642,7 +780,7 @@ namespace actorcompiler
                 }
 
                 var iter = getIteratorName(cx);
-                state.Add(new StateVar { SourceLine = stmt.FirstSourceLine, name = iter, type = "decltype(std::begin(fake<" + container.type + ">()))", initializer = null });
+                state.Add(new StateVar { SourceLine = stmt.FirstSourceLine, name = iter, type = "decltype(std::begin(std::declval<" + container.type + ">()))", initializer = null });
                 var equivalent = new ForStatement {
                     initExpression = iter + " = std::begin(" + stmt.rangeExpression + ")",
                     condExpression = iter + " != std::end(" + stmt.rangeExpression + ")",
@@ -717,8 +855,9 @@ namespace actorcompiler
                     Group = group, 
                     Index = this.whenCount+i,
                     Body = getFunction(cx.target.name, "when", 
-                        string.Format("{0} const& {2}{1}", ch.wait.result.type, ch.wait.result.name, ch.wait.resultIsState?"__":""), 
-                        loopDepth),
+                                           new string[] { string.Format("{0} const& {2}{1}", ch.wait.result.type, ch.wait.result.name, ch.wait.resultIsState?"__":""), loopDepth },
+                                           new string[] { string.Format("{0} && {2}{1}", ch.wait.result.type, ch.wait.result.name, ch.wait.resultIsState?"__":""), loopDepth }
+                                       ),
                     Future = string.Format("__when_expr_{0}", this.whenCount + i),
                     CallbackType = string.Format("{3}< {0}, {1}, {2} >", fullClassName, this.whenCount + i, ch.wait.result.type, ch.wait.isWaitNext ? "ActorSingleCallback" : "ActorCallback"),
                     CallbackTypeInStateClass = string.Format("{3}< {0}, {1}, {2} >", className, this.whenCount + i, ch.wait.result.type, ch.wait.isWaitNext ? "ActorSingleCallback" : "ActorCallback")
@@ -730,7 +869,7 @@ namespace actorcompiler
 
             var exitFunc = getFunction("exitChoose", "");
             exitFunc.returnType = "void";
-            exitFunc.WriteLine("if ({0}->actor_wait_state > 0) {0}->actor_wait_state = 0;", This);
+            exitFunc.WriteLine("if (actorWaitStateIsWaiting({0}->actor_wait_state)) {0}->actor_wait_state = ACTOR_WAIT_STATE_NOT_WAITING;", This);
             foreach(var ch in choices)
                 exitFunc.WriteLine("{0}->{1}::remove();", This, ch.CallbackTypeInStateClass);
             exitFunc.endIsUnreachable = true;
@@ -747,6 +886,7 @@ namespace actorcompiler
                 var r = ch.Body;
                 if (ch.Stmt.wait.resultIsState)
                 {
+                    Function overload = r.popOverload();
                     CompileStatement(new StateDeclarationStatement
                     {
                         FirstSourceLine = ch.Stmt.FirstSourceLine,
@@ -757,6 +897,11 @@ namespace actorcompiler
                             initializerConstructorSyntax = false 
                         }
                     }, cx.WithTarget(r));
+                    if (overload != null)
+                    {
+                        overload.WriteLine("{0} = std::move(__{0});", ch.Stmt.wait.result.name);
+                        r.setOverload(overload);
+                    }
                 }
                 if (ch.Stmt.body != null)
                 {
@@ -767,8 +912,14 @@ namespace actorcompiler
                     reachable = true;
                     if (cx.next.formalParameters.Length == 1)
                         r.WriteLine("loopDepth = {0};", cx.next.call("loopDepth"));
-                    else
+                    else {
+                        Function overload = r.popOverload();
                         r.WriteLine("loopDepth = {0};", cx.next.call(ch.Stmt.wait.result.name, "loopDepth"));
+                        if (overload != null) {
+                            overload.WriteLine("loopDepth = {0};", cx.next.call(string.Format("std::move({0})", ch.Stmt.wait.result.name), "loopDepth"));
+                            r.setOverload(overload);
+                        }
+                    }
                 }
 
                 var cbFunc = new Function { 
@@ -776,16 +927,27 @@ namespace actorcompiler
                     returnType = "void",
                     formalParameters = new string[] { 
                         ch.CallbackTypeInStateClass + "*",
-                        ch.Stmt.wait.result.type + " value"
+                        ch.Stmt.wait.result.type + " const& value"
                     },
                     endIsUnreachable = true
                 };
+                cbFunc.addOverload(ch.CallbackTypeInStateClass + "*", ch.Stmt.wait.result.type + " && value");
                 functions.Add(string.Format("{0}#{1}", cbFunc.name, ch.Index), cbFunc);
                 cbFunc.Indent(codeIndent);
+                ProbeEnter(cbFunc, actor.name, ch.Index);
                 cbFunc.WriteLine("{0};", exitFunc.call());
+
+                Function _overload = cbFunc.popOverload();
                 TryCatch(cx.WithTarget(cbFunc), cx.catchFErr, cx.tryLoopDepth, () => {
                     cbFunc.WriteLine("{0};", ch.Body.call("value", "0"));
                 }, false);
+                if (_overload != null) {
+                    TryCatch(cx.WithTarget(_overload), cx.catchFErr, cx.tryLoopDepth, () => {
+                        _overload.WriteLine("{0};", ch.Body.call("std::move(value)", "0"));
+                    }, false);
+                    cbFunc.setOverload(_overload);
+                }
+                ProbeExit(cbFunc, actor.name, ch.Index);
 
                 var errFunc = new Function
                 {
@@ -799,11 +961,13 @@ namespace actorcompiler
                 };
                 functions.Add(string.Format("{0}#{1}", errFunc.name, ch.Index), errFunc);
                 errFunc.Indent(codeIndent);
+                ProbeEnter(errFunc, actor.name, ch.Index);
                 errFunc.WriteLine("{0};", exitFunc.call());
                 TryCatch(cx.WithTarget(errFunc), cx.catchFErr, cx.tryLoopDepth, () =>
                 {
                     errFunc.WriteLine("{0};", cx.catchFErr.call("err", "0"));
                 }, false);
+                ProbeExit(errFunc, actor.name, ch.Index);
             }
 
             bool firstChoice = true;
@@ -811,7 +975,13 @@ namespace actorcompiler
             {
                 string getFunc = ch.Stmt.wait.isWaitNext ? "pop" : "get";
                 LineNumber(cx.target, ch.Stmt.wait.FirstSourceLine);
-                cx.target.WriteLine("{2}<{3}> {0} = {1};", ch.Future, ch.Stmt.wait.futureExpression, ch.Stmt.wait.isWaitNext ? "FutureStream" : "StrictFuture", ch.Stmt.wait.result.type);
+                if (ch.Stmt.wait.isWaitNext) {
+                    cx.target.WriteLine("auto {0} = {1};", ch.Future, ch.Stmt.wait.futureExpression);
+                    cx.target.WriteLine("static_assert(std::is_same<decltype({0}), FutureStream<{1}>>::value || std::is_same<decltype({0}), ThreadFutureStream<{1}>>::value, \"invalid type\");", ch.Future, ch.Stmt.wait.result.type);
+
+                } else {
+                    cx.target.WriteLine("{2}<{3}> {0} = {1};", ch.Future, ch.Stmt.wait.futureExpression, "StrictFuture", ch.Stmt.wait.result.type);
+                }
 
                 if (firstChoice)
                 {
@@ -820,8 +990,8 @@ namespace actorcompiler
                     // not evaluate `expr2()`.
                     firstChoice = false;
                     LineNumber(cx.target, stmt.FirstSourceLine);
-                    if (!actor.isUncancellable)
-                        cx.target.WriteLine("if ({1}->actor_wait_state < 0) return {0};", cx.catchFErr.call("actor_cancelled()", AdjustLoopDepth(cx.tryLoopDepth)), This);
+                    if (actor.IsCancellable())
+                        cx.target.WriteLine("if (actorWaitStateIsCancelled({1}->actor_wait_state)) return {0};", cx.catchFErr.call("actor_cancelled()", AdjustLoopDepth(cx.tryLoopDepth)), This);
                 }
 
                 cx.target.WriteLine("if ({0}.isReady()) {{ if ({0}.isError()) return {2}; else return {1}; }};", ch.Future, ch.Body.call(ch.Future + "." + getFunc + "()", "loopDepth"), cx.catchFErr.call(ch.Future + ".getError()", AdjustLoopDepth(cx.tryLoopDepth)));
@@ -875,10 +1045,14 @@ namespace actorcompiler
                 },
                 FirstSourceLine = stmt.FirstSourceLine
             };
-            if (!stmt.resultIsState)
+            if (!stmt.resultIsState) {
                 cx.next.formalParameters = new string[] {
                     string.Format("{0} const& {1}", stmt.result.type, stmt.result.name), 
                     loopDepth };
+                cx.next.addOverload(
+                    string.Format("{0} && {1}", stmt.result.type, stmt.result.name),
+                    loopDepth);
+            }
             CompileStatement(equiv, cx);
         }
         void CompileStatement(CodeBlock stmt, Context cx)
@@ -912,7 +1086,15 @@ namespace actorcompiler
                     // if it has side effects
                     cx.target.WriteLine("if (!{0}->SAV<{1}>::futures) {{ (void)({2}); this->~{3}(); {0}->destroy(); return 0; }}", This, actor.returnType, stmt.expression, stateClassName);
                     // Build the return value directly in SAV<T>::value_storage
-                    cx.target.WriteLine("new (&{0}->SAV< {1} >::value()) {1}({2});", This, actor.returnType, stmt.expression);
+                    // If the expression is exactly the name of a state variable, std::move() it
+                    if (state.Exists(s => s.name == stmt.expression))
+                    {
+                        cx.target.WriteLine("new (&{0}->SAV< {1} >::value()) {1}(std::move({2})); // state_var_RVO", This, actor.returnType, stmt.expression);
+                    }
+                    else
+                    {
+                        cx.target.WriteLine("new (&{0}->SAV< {1} >::value()) {1}({2});", This, actor.returnType, stmt.expression);
+                    }
                     // Destruct state
                     cx.target.WriteLine("this->~{0}();", stateClassName);
                     // Tell SAV<T> to return the value we already constructed in value_storage
@@ -928,7 +1110,7 @@ namespace actorcompiler
             bool useContinuation = WillContinue(stmt.ifBody) || WillContinue(stmt.elseBody);
 
             LineNumber(cx.target, stmt.FirstSourceLine);
-            cx.target.WriteLine("if ({0})", stmt.expression);
+            cx.target.WriteLine("if {1}({0})", stmt.expression, stmt.constexpr ? "constexpr " : "");
             cx.target.WriteLine("{");
             cx.target.Indent(+1);
             Function ifTarget = Compile(AsCodeBlock(stmt.ifBody), cx, useContinuation).target;
@@ -1067,15 +1249,24 @@ namespace actorcompiler
                 {
                     WriteFunction(writer, func, body);
                 }
+                if (func.overload != null)
+                {
+                    string overloadBody = func.overload.BodyText;
+                    if (overloadBody.Length != 0)
+                    {
+                        WriteFunction(writer, func.overload, overloadBody);
+                    }
+                }
             }
         }
 
         private static void WriteFunction(TextWriter writer, Function func, string body)
         {
-            writer.WriteLine(memberIndentStr + "{0}{1}({2})", 
+            writer.WriteLine(memberIndentStr + "{0}{1}({2}){3}",
                 func.returnType == "" ? "" : func.returnType + " ", 
                 func.useByName(),
-                string.Join(",", func.formalParameters));
+                string.Join(",", func.formalParameters),
+                func.specifiers == "" ? "" : " " + func.specifiers);
             if (func.returnType != "")
                 writer.WriteLine(memberIndentStr + "{");
             writer.WriteLine(body);
@@ -1084,7 +1275,7 @@ namespace actorcompiler
             writer.WriteLine(memberIndentStr + "}");
         }
 
-        Function getFunction(string baseName, string addName, params string[] formalParameters)
+        Function getFunction(string baseName, string addName, string[] formalParameters, string[] overloadFormalParameters)
         {
             string proposedName;
             if (addName == "cont" && baseName.Length>=5 && baseName.Substring(baseName.Length - 5, 4) == "cont")
@@ -1100,10 +1291,19 @@ namespace actorcompiler
                 returnType = "int",
                 formalParameters = formalParameters
             };
+            if (overloadFormalParameters != null) {
+                f.addOverload(overloadFormalParameters);
+            }
             f.Indent(codeIndent);
             functions.Add(f.name, f);
             return f;
         }
+
+        Function getFunction(string baseName, string addName, params string[] formalParameters)
+        {
+            return getFunction(baseName, addName, formalParameters, null);
+        }
+
         string[] ParameterList()
         {
             return actor.parameters.Select(p =>
@@ -1117,7 +1317,7 @@ namespace actorcompiler
         }
         void WriteCancelFunc(TextWriter writer)
         {
-            if (!actor.isUncancellable)
+            if (actor.IsCancellable())
             {
                 Function cancelFunc = new Function
                 {
@@ -1125,11 +1325,12 @@ namespace actorcompiler
                     returnType = "void",
                     formalParameters = new string[] {},
                     endIsUnreachable = true,
-                    publicName = true
+                    publicName = true,
+                    specifiers = "override"
                 };
                 cancelFunc.Indent(codeIndent);
                 cancelFunc.WriteLine("auto wait_state = this->actor_wait_state;");
-                cancelFunc.WriteLine("this->actor_wait_state = -1;");
+                cancelFunc.WriteLine("this->actor_wait_state = ACTOR_WAIT_STATE_CANCELLED;");
                 cancelFunc.WriteLine("switch (wait_state) {");
                 int lastGroup = -1;
                 foreach (var cb in callbacks.OrderBy(cb => cb.CallbackGroup))
@@ -1153,13 +1354,29 @@ namespace actorcompiler
                 endIsUnreachable = true,
                 publicName = true
             };
+
+            // Initializes class member variables
             constructor.Indent(codeIndent);
             constructor.WriteLine( " : Actor<" + (actor.returnType == null ? "void" : actor.returnType) + ">()," );
-            constructor.WriteLine( "   {0}({1})", fullStateClassName, string.Join(", ", actor.parameters.Select(p => p.name)));
+            constructor.WriteLine( "   {0}({1}),", fullStateClassName, string.Join(", ", actor.parameters.Select(p => p.name)));
+            constructor.WriteLine( "   activeActorHelper(__actorIdentifier)");
             constructor.Indent(-1);
+
             constructor.WriteLine("{");
             constructor.Indent(+1);
+
+            ProbeEnter(constructor, actor.name);
+
+            constructor.WriteLine("#ifdef ENABLE_SAMPLING");
+            constructor.WriteLine("this->lineage.setActorName(\"{0}\");", actor.name);
+            constructor.WriteLine("LineageScope _(&this->lineage);");
+            // constructor.WriteLine("getCurrentLineage()->modify(&StackLineage::actorName) = \"{0}\"_sr;", actor.name);
+            constructor.WriteLine("#endif");
+
             constructor.WriteLine("this->{0};", body.call());
+
+            ProbeExit(constructor, actor.name);
+
             WriteFunction(writer, constructor, constructor.BodyText);
         }
 
@@ -1200,7 +1417,25 @@ namespace actorcompiler
             constructor.Indent(-1);
             constructor.WriteLine("{");
             constructor.Indent(+1);
+            ProbeCreate(constructor, actor.name);
             WriteFunction(writer, constructor, constructor.BodyText);
+        }
+
+        void WriteStateDestructor(TextWriter writer) {
+            Function destructor = new Function
+            {
+                name = String.Format("~{0}", stateClassName),
+                returnType = "",
+                formalParameters = new string[0],
+                endIsUnreachable = true,
+                publicName = true,
+            };
+            destructor.Indent(codeIndent);
+            destructor.Indent(-1);
+            destructor.WriteLine("{");
+            destructor.Indent(+1);
+            ProbeDestroy(destructor, actor.name);
+            WriteFunction(writer, destructor, destructor.BodyText);
         }
 
         IEnumerable<Statement> Flatten(Statement stmt)

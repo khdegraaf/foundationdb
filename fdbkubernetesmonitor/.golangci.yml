@@ -1,0 +1,89 @@
+issues:
+  exclude-files:
+    - "zz_generated.*\\.go$"
+  # don't skip warning about doc comments
+  # don't exclude the default set of lint
+  exclude-use-default: false
+  exclude:
+    - "ST1000: at least one file in a package should have a package comment"
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - revive
+      text: "dot-imports: should not use dot imports"
+    # exclude deprecation warning otherwise we get an error for our own deprecations
+    - linters:
+        - staticcheck
+      text: "SA1019:"
+    - linters:
+        - govet
+      text: 'declaration of "(err|ctx)" shadows declaration at'
+    - linters:
+        - revive
+      text: "package-comments: should have a package comment"
+
+linters:
+  disable-all: true
+  enable:
+    - asciicheck
+    - bodyclose
+    - depguard
+    - dogsled
+    - errcheck
+    - errorlint
+    - exportloopref
+    #    - goconst
+    #    - gocritic
+    #    - gocyclo
+    - gofmt
+    #- goimports
+    - goprintffuncname
+    #    - gosec
+    - gosimple
+    - govet
+    - importas
+    - ineffassign
+    - misspell
+    - nakedret
+    - nilerr
+    #    - nolintlint
+    - prealloc
+    - revive
+    - rowserrcheck
+    - staticcheck
+    - stylecheck
+    - typecheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+
+linters-settings:
+  errcheck:
+    exclude-functions:
+      - (io.Closer).Close
+      - (*os.File).Close
+  govet:
+    enable:
+      - shadow
+  depguard:
+    rules:
+      main:
+        allow:
+          - $gostd
+          - github.com/apple/foundationdb
+          - sigs.k8s.io/controller-runtime
+          - k8s.io/apimachinery
+          - k8s.io/client-go
+          - k8s.io/api
+          - k8s.io/utils
+          - github.com/onsi/gomega
+          - github.com/onsi/ginkgo
+          - github.com/spf13/pflag
+          - github.com/prometheus
+          - github.com/go-logr
+          - github.com/fsnotify/fsnotify
+
+run:
+  timeout: 10m
+  allow-parallel-runners: true

@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ namespace vexillographer
             outFile.WriteLine("struct FDB{0}s {{", scope.ToString());
             outFile.WriteLine("\tfriend class FDBOptionInfoMap<FDB{0}s>;",scope.ToString());
             outFile.WriteLine();
-            outFile.WriteLine("\tenum Option {");
+            outFile.WriteLine("\tenum Option : int {");
             outFile.WriteLine(string.Join(",\n\n", options.Select(f => c.getCLine(f, "\t\t", "")).ToArray()));
             outFile.WriteLine("\t};");
             outFile.WriteLine();
@@ -47,8 +47,9 @@ namespace vexillographer
 
         private static string getCInfoLine(Option o, string indent, string structName)
         {
-            return String.Format("{0}ADD_OPTION_INFO({1}, {2}, \"{2}\", \"{3}\", \"{4}\", {5}, {6})",
-                indent, structName, o.name.ToUpper(), o.comment, o.getParameterComment(), (o.paramDesc != null).ToString().ToLower(), o.hidden.ToString().ToLower());
+            return String.Format("{0}ADD_OPTION_INFO({1}, {2}, \"{2}\", \"{3}\", \"{4}\", {5}, {6}, {7}, {8}, {9}, FDBOptionInfo::ParamType::{10})",
+                indent, structName, o.name.ToUpper(), o.comment, o.getParameterComment(), (o.paramDesc != null).ToString().ToLower(), 
+                o.hidden.ToString().ToLower(), o.persistent.ToString().ToLower(), o.sensitive.ToString().ToLower(), o.defaultFor, o.paramType);
         }
 
         private static void writeCppInfo(TextWriter outFile, Scope scope, IEnumerable<Option> options)

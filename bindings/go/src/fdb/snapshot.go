@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,11 +46,17 @@ type Snapshot struct {
 //
 // See the ReadTransactor interface for an example of using ReadTransact with
 // Transaction, Snapshot and Database objects.
-func (s Snapshot) ReadTransact(f func(ReadTransaction) (interface{}, error)) (r interface{}, e error) {
-	defer panicToError(&e)
+func (s Snapshot) ReadTransact(f func(ReadTransaction) (interface{}, error)) (r interface{}, err error) {
+	defer panicToError(&err)
 
-	r, e = f(s)
+	r, err = f(s)
 	return
+}
+
+// Cancel cancels the underlying transaction of the snapshot.
+// See Transaction.Cancel() for more information.
+func (s Snapshot) Cancel() {
+	s.transaction.cancel()
 }
 
 // Snapshot returns the receiver and allows Snapshot to satisfy the
@@ -85,4 +91,32 @@ func (s Snapshot) GetReadVersion() FutureInt64 {
 // interacting.
 func (s Snapshot) GetDatabase() Database {
 	return s.transaction.db
+}
+
+// GetEstimatedRangeSizeBytes returns an estimate for the number of bytes
+// stored in the given range.
+func (s Snapshot) GetEstimatedRangeSizeBytes(r ExactRange) FutureInt64 {
+	beginKey, endKey := r.FDBRangeKeys()
+	return s.getEstimatedRangeSizeBytes(
+		beginKey.FDBKey(),
+		endKey.FDBKey(),
+	)
+}
+
+// GetRangeSplitPoints returns a list of keys that can split the given range
+// into (roughly) equally sized chunks based on chunkSize.
+// Note: the returned split points contain the start key and end key of the given range.
+func (s Snapshot) GetRangeSplitPoints(r ExactRange, chunkSize int64) FutureKeyArray {
+	beginKey, endKey := r.FDBRangeKeys()
+	return s.getRangeSplitPoints(
+		beginKey.FDBKey(),
+		endKey.FDBKey(),
+		chunkSize,
+	)
+}
+
+// Snapshot returns the receiver and allows Snapshot to satisfy the
+// ReadTransaction interface.
+func (s Snapshot) Options() TransactionOptions {
+	return TransactionOptions{s.transaction}
 }

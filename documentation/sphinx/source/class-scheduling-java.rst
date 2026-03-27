@@ -30,7 +30,7 @@ Before using the API, we need to specify the API version. This allows programs t
   private static final Database db;
 
   static {
-    fdb = FDB.selectAPIVersion(610);
+    fdb = FDB.selectAPIVersion(800);
     db = fdb.open();
   }
 
@@ -66,7 +66,7 @@ If this is all working, it looks like we are ready to start building a real appl
     private static final Database db;
 
     static {
-      fdb = FDB.selectAPIVersion(610);
+      fdb = FDB.selectAPIVersion(800);
       db = fdb.open();
     }
 
@@ -148,11 +148,16 @@ is equivalent to something like:
         tr.set(Tuple.from("class", "class1").pack(), encodeInt(100));
         t.commit().join();
       } catch (RuntimeException e) {
-        t = t.onError(e).get();
+        t = t.onError(e).join();
       }
     }
 
 If instead you pass a :class:`Transaction` for the :class:`TransactionContext` parameter, the transaction will be used directly, and it is assumed that the caller implements appropriate retry logic for errors. This permits functions using this pattern to be composed into larger transactions.
+
+Note that by default, the operation will be retried an infinite number of times and the transaction will never time out. It is therefore recommended that the client choose a default transaction retry limit or timeout value that is suitable for their application. This can be set either at the transaction level using the ``setRetryLimit`` or ``setTimeout`` transaction options or at the database level with the ``setTransactionRetryLimit`` or ``setTransactionTimeout`` database options. For example, one can set a one minute timeout on each transaction and a default retry limit of 100 by calling::
+
+    db.options().setTransactionTimeout(60000);  // 60,000 ms = 1 minute
+    db.options().setTransactionRetryLimit(100);
 
 Making some sample classes
 --------------------------
@@ -285,10 +290,10 @@ This is easy -- we simply add a condition to check that the value is non-zero. L
   private static void signup(TransactionContext db, final String s, final String c) {
     db.run((Transaction tr) -> {
       byte[] rec = Tuple.from("attends", s, c).pack();
-      if (tr.get(rec).get() != null)
+      if (tr.get(rec).join() != null)
         return null; // already signed up
 
-      int seatsLeft = decodeInt(tr.get(Tuple.from("class", c).pack()).get());
+      int seatsLeft = decodeInt(tr.get(Tuple.from("class", c).pack()).join());
       if (seatsLeft == 0)
         throw new IllegalStateException("No remaining seats");
 
@@ -436,8 +441,10 @@ Here's the code for the scheduling tutorial:
     private static final Database db;
 
     static {
-      fdb = FDB.selectAPIVersion(610);
+      fdb = FDB.selectAPIVersion(800);
       db = fdb.open();
+      db.options().setTransactionTimeout(60000);  // 60,000 ms = 1 minute
+      db.options().setTransactionRetryLimit(100);
     }
 
     // Generate 1,620 classes like '9:00 chem for dummies'

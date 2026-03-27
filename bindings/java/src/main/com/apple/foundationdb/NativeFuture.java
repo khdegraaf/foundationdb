@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,6 +44,9 @@ abstract class NativeFuture<T> extends CompletableFuture<T> implements AutoClose
 	//
 	// Since this must be called from a constructor, we assume that close
 	// cannot be called concurrently.
+	//
+	// Note: This function guarantees the callback will be executed **at most once**.
+	//
 	protected void registerMarshalCallback(Executor executor) {
 		if(cPtr != 0) {
 			Future_registerCallback(cPtr, () -> executor.execute(this::marshalWhenDone));
@@ -51,8 +54,8 @@ abstract class NativeFuture<T> extends CompletableFuture<T> implements AutoClose
 	}
 
 	private void marshalWhenDone() {
+		T val = null;
 		try {
-			T val = null;
 			boolean shouldComplete = false;
 			try {
 				pointerReadLock.lock();
@@ -74,11 +77,11 @@ abstract class NativeFuture<T> extends CompletableFuture<T> implements AutoClose
 		} catch(Throwable t) {
 			completeExceptionally(t);
 		} finally {
-			postMarshal();
+			postMarshal(val);
 		}
 	}
 
-	protected void postMarshal() {
+	protected void postMarshal(T value) {
 		close();
 	}
 
@@ -107,14 +110,14 @@ abstract class NativeFuture<T> extends CompletableFuture<T> implements AutoClose
 	public boolean cancel(boolean mayInterruptIfRunning) {
 		boolean result = super.cancel(mayInterruptIfRunning);
 		try {
-			rwl.readLock().lock();
+			rwl.writeLock().lock();
 			if(cPtr != 0) {
 				Future_cancel(cPtr);
 			}
 			return result;
 		}
 		finally {
-			rwl.readLock().unlock();
+			rwl.writeLock().unlock();
 		}
 	}
 

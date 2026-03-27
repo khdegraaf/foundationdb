@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ public class SerialInsertion {
 	private static final int NODES = 1000000;
 
 	public static void main(String[] args) {
-		FDB api = FDB.selectAPIVersion(610);
+		FDB api = FDB.selectAPIVersion(TestApiVersion.CURRENT);
 		try(Database database = api.open()) {
 			long start = System.currentTimeMillis();
 
@@ -88,6 +88,7 @@ public class SerialInsertion {
 							tr.set(buf.array(), value);
 						}
 						tr.commit().join();
+						tr.close();
 						tr = db.createTransaction();
 						done += i;
 					}

@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ class Instruction extends Stack {
 	private static final String SUFFIX_SNAPSHOT = "_SNAPSHOT";
 	private static final String SUFFIX_DATABASE = "_DATABASE";
 
-	final String op;
+    final String op;
 	final Tuple tokens;
 	final Context context;
 	final boolean isDatabase;
@@ -49,10 +49,10 @@ class Instruction extends Stack {
 		this.tokens = tokens;
 
 		String fullOp = tokens.getString(0);
-		isDatabase = fullOp.endsWith(SUFFIX_DATABASE);
+		boolean isDatabaseLocal = fullOp.endsWith(SUFFIX_DATABASE);
 		isSnapshot = fullOp.endsWith(SUFFIX_SNAPSHOT);
 
-		if(isDatabase) {
+		if(isDatabaseLocal) {
 			tr = null;
 			readTr = null;
 			op = fullOp.substring(0, fullOp.length() - SUFFIX_DATABASE.length());
@@ -68,22 +68,24 @@ class Instruction extends Stack {
 			op = fullOp;
 		}
 
+		isDatabase = isDatabaseLocal;
+
 		tcx = isDatabase ? context.db : tr;
 		readTcx = isDatabase ? context.db : readTr;
 	}
 
-	boolean setTransaction(Transaction newTr) {
-		if(!isDatabase) {
-			context.updateCurrentTransaction(newTr);
+	boolean replaceTransaction(Transaction newTr) {
+	        if(!isDatabase) {
+			context.replaceTransaction(newTr);
 			return true;
 		}
 
 		return false;
 	}
 
-	boolean setTransaction(Transaction oldTr, Transaction newTr) {
+	boolean replaceTransaction(Transaction oldTr, Transaction newTr) {
 		if(!isDatabase) {
-			return context.updateCurrentTransaction(oldTr, newTr);
+			return context.replaceTransaction(oldTr, newTr);
 		}
 
 		return false;

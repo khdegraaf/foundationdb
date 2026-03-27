@@ -98,7 +98,7 @@ Data Operations
 
     When finished, the stack should be empty. Note that because the stack may be
     large, it may be necessary to commit the transaction every so often (e.g.
-    after every 100 sets) to avoid past_version errors.
+    after every 100 sets) to avoid transaction_too_old errors.
 
 FoundationDB Operations
 -----------------------
@@ -117,8 +117,8 @@ should simulate it using an anonymous transaction. Remember that set and clear
 operations must immediately commit (with appropriate retry behavior!).
 
 Any error that bubbles out of these operations must be caught. In the event of
-an error, you must push the packed tuple of the string `"ERROR"` and the error
-code (as a string, not an integer).
+an error, you must push the packed tuple of the byte string `"ERROR"` and the
+error code (as a byte string, not an integer).
 
 Some operations may allow you to push future values onto the stack. When popping
 objects from the stack, the future MUST BE waited on and errors caught before
@@ -163,6 +163,20 @@ futures must apply the following rules to the result:
     Pops the top item off of the stack as KEY and then looks up KEY in the
     database using the get() method. May optionally push a future onto the
     stack.
+
+#### GET_ESTIMATED_RANGE_SIZE
+
+    Pops the top two items off of the stack as BEGIN_KEY and END_KEY to 
+    construct a key range. Then call the `getEstimatedRangeSize` API of 
+    the language binding. Make sure the API returns without error. Finally 
+    push the string "GOT_ESTIMATED_RANGE_SIZE" onto the stack.
+
+#### GET_RANGE_SPLIT_POINTS
+
+    Pops the top three items off of the stack as BEGIN_KEY, END_KEY and
+    CHUNK_SIZE. Then call the `getRangeSplitPoints` API of the language
+    binding. Make sure the API returns without error. Finally push the string
+    "GOT_RANGE_SPLIT_POINTS" onto the stack.
 
 #### GET_KEY (_SNAPSHOT, _DATABASE)
 
@@ -276,6 +290,12 @@ futures must apply the following rules to the result:
     Gets the committed version from the current transaction and stores it in the
     internal stack machine state as the last seen version. Pushes the byte
     string "GOT_COMMITTED_VERSION" onto the stack.
+
+#### GET_APPROXIMATE_SIZE
+
+    Calls get_approximate_size and pushes the byte string "GOT_APPROXIMATE_SIZE"
+    onto the stack. Note bindings may issue GET_RANGE calls with different
+    limits, so these bindings can obtain different sizes back.
 
 #### WAIT_FUTURE
 

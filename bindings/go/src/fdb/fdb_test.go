@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,51 +24,60 @@ package fdb_test
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 )
 
-func ExampleOpenDefault() {
-	var e error
+const API_VERSION int = 800
 
-	e = fdb.APIVersion(400)
-	if e != nil {
-		fmt.Printf("Unable to set API version: %v\n", e)
+func ExampleOpenDefault() {
+	var err error
+
+	err = fdb.APIVersion(API_VERSION)
+	if err != nil {
+		fmt.Printf("Unable to set API version: %v\n", err)
 		return
 	}
 
 	// OpenDefault opens the database described by the platform-specific default
-	// cluster file and the database name []byte("DB").
-	db, e := fdb.OpenDefault()
-	if e != nil {
-		fmt.Printf("Unable to open default database: %v\n", e)
+	// cluster file
+	db, err := fdb.OpenDefault()
+	if err != nil {
+		fmt.Printf("Unable to open default database: %v\n", err)
 		return
 	}
 
-	_ = db
+	// Close the database after usage
+	defer db.Close()
+
+	// Do work here
+
+	// Output:
 }
 
-func ExampleVersionstamp(t *testing.T) {
-	fdb.MustAPIVersion(400)
+func TestVersionstamp(t *testing.T) {
+	fdb.MustAPIVersion(API_VERSION)
 	db := fdb.MustOpenDefault()
 
 	setVs := func(t fdb.Transactor, key fdb.Key) (fdb.FutureKey, error) {
 		fmt.Printf("setOne called with:  %T\n", t)
-		ret, e := t.Transact(func(tr fdb.Transaction) (interface{}, error) {
-			tr.SetVersionstampedValue(key, []byte("blahblahbl"))
+		ret, err := t.Transact(func(tr fdb.Transaction) (interface{}, error) {
+			tr.SetVersionstampedValue(key, []byte("blahblahbl\x00\x00\x00\x00"))
 			return tr.GetVersionstamp(), nil
 		})
-		return ret.(fdb.FutureKey), e
+		return ret.(fdb.FutureKey), err
 	}
 
 	getOne := func(rt fdb.ReadTransactor, key fdb.Key) ([]byte, error) {
 		fmt.Printf("getOne called with: %T\n", rt)
-		ret, e := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+		ret, err := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
 			return rtr.Get(key).MustGet(), nil
 		})
-		if e != nil {
-			return nil, e
+		if err != nil {
+			return nil, err
 		}
 		return ret.([]byte), nil
 	}
@@ -76,51 +85,94 @@ func ExampleVersionstamp(t *testing.T) {
 	var v []byte
 	var fvs fdb.FutureKey
 	var k fdb.Key
+	var err error
 
-	fvs, _ = setVs(db, fdb.Key("foo"))
-	v, _ = getOne(db, fdb.Key("foo"))
-	t.Log(v)
-	k, _ = fvs.Get()
+	fvs, err = setVs(db, fdb.Key("foo"))
+	if err != nil {
+		t.Errorf("setOne failed %v", err)
+	}
+	v, err = getOne(db, fdb.Key("foo"))
+	if err != nil {
+		t.Errorf("getOne failed %v", err)
+	}
+	t.Logf("getOne returned %s", v)
+	k, err = fvs.Get()
+	if err != nil {
+		t.Errorf("setOne wait failed %v", err)
+	}
 	t.Log(k)
+	t.Logf("setOne returned %s", k)
+}
+
+func TestEstimatedRangeSize(t *testing.T) {
+	fdb.MustAPIVersion(API_VERSION)
+	db := fdb.MustOpenDefault()
+
+	var f fdb.FutureInt64
+	_, err := db.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+		f = rtr.GetEstimatedRangeSizeBytes(subspace.AllKeys())
+
+		return nil, nil
+	})
+	if err != nil {
+		t.Error(err)
+	}
+
+	_, err = f.Get()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func TestReadTransactionOptions(t *testing.T) {
+	fdb.MustAPIVersion(API_VERSION)
+	db := fdb.MustOpenDefault()
+	_, err := db.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+		rtr.Options().SetAccessSystemKeys()
+		return rtr.Get(fdb.Key("\xff/")).MustGet(), nil
+	})
+	if err != nil {
+		t.Errorf("Failed to read system key: %s", err)
+	}
 }
 
 func ExampleTransactor() {
-	fdb.MustAPIVersion(400)
+	fdb.MustAPIVersion(API_VERSION)
 	db := fdb.MustOpenDefault()
 
 	setOne := func(t fdb.Transactor, key fdb.Key, value []byte) error {
 		fmt.Printf("setOne called with:  %T\n", t)
-		_, e := t.Transact(func(tr fdb.Transaction) (interface{}, error) {
+		_, err := t.Transact(func(tr fdb.Transaction) (interface{}, error) {
 			// We don't actually call tr.Set here to avoid mutating a real database.
 			// tr.Set(key, value)
 			return nil, nil
 		})
-		return e
+		return err
 	}
 
 	setMany := func(t fdb.Transactor, value []byte, keys ...fdb.Key) error {
 		fmt.Printf("setMany called with: %T\n", t)
-		_, e := t.Transact(func(tr fdb.Transaction) (interface{}, error) {
+		_, err := t.Transact(func(tr fdb.Transaction) (interface{}, error) {
 			for _, key := range keys {
 				setOne(tr, key, value)
 			}
 			return nil, nil
 		})
-		return e
+		return err
 	}
 
-	var e error
+	var err error
 
 	fmt.Println("Calling setOne with a database:")
-	e = setOne(db, []byte("foo"), []byte("bar"))
-	if e != nil {
-		fmt.Println(e)
+	err = setOne(db, []byte("foo"), []byte("bar"))
+	if err != nil {
+		fmt.Println(err)
 		return
 	}
 	fmt.Println("\nCalling setMany with a database:")
-	e = setMany(db, []byte("bar"), fdb.Key("foo1"), fdb.Key("foo2"), fdb.Key("foo3"))
-	if e != nil {
-		fmt.Println(e)
+	err = setMany(db, []byte("bar"), fdb.Key("foo1"), fdb.Key("foo2"), fdb.Key("foo3"))
+	if err != nil {
+		fmt.Println(err)
 		return
 	}
 
@@ -136,45 +188,45 @@ func ExampleTransactor() {
 }
 
 func ExampleReadTransactor() {
-	fdb.MustAPIVersion(400)
+	fdb.MustAPIVersion(API_VERSION)
 	db := fdb.MustOpenDefault()
 
 	getOne := func(rt fdb.ReadTransactor, key fdb.Key) ([]byte, error) {
 		fmt.Printf("getOne called with: %T\n", rt)
-		ret, e := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+		ret, err := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
 			return rtr.Get(key).MustGet(), nil
 		})
-		if e != nil {
-			return nil, e
+		if err != nil {
+			return nil, err
 		}
 		return ret.([]byte), nil
 	}
 
 	getTwo := func(rt fdb.ReadTransactor, key1, key2 fdb.Key) ([][]byte, error) {
 		fmt.Printf("getTwo called with: %T\n", rt)
-		ret, e := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
+		ret, err := rt.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
 			r1, _ := getOne(rtr, key1)
 			r2, _ := getOne(rtr.Snapshot(), key2)
 			return [][]byte{r1, r2}, nil
 		})
-		if e != nil {
-			return nil, e
+		if err != nil {
+			return nil, err
 		}
 		return ret.([][]byte), nil
 	}
 
-	var e error
+	var err error
 
 	fmt.Println("Calling getOne with a database:")
-	_, e = getOne(db, fdb.Key("foo"))
-	if e != nil {
-		fmt.Println(e)
+	_, err = getOne(db, fdb.Key("foo"))
+	if err != nil {
+		fmt.Println(err)
 		return
 	}
 	fmt.Println("\nCalling getTwo with a database:")
-	_, e = getTwo(db, fdb.Key("foo"), fdb.Key("bar"))
-	if e != nil {
-		fmt.Println(e)
+	_, err = getTwo(db, fdb.Key("foo"), fdb.Key("bar"))
+	if err != nil {
+		fmt.Println(err)
 		return
 	}
 
@@ -189,12 +241,12 @@ func ExampleReadTransactor() {
 }
 
 func ExamplePrefixRange() {
-	fdb.MustAPIVersion(400)
+	fdb.MustAPIVersion(API_VERSION)
 	db := fdb.MustOpenDefault()
 
-	tr, e := db.CreateTransaction()
-	if e != nil {
-		fmt.Printf("Unable to create transaction: %v\n", e)
+	tr, err := db.CreateTransaction()
+	if err != nil {
+		fmt.Printf("Unable to create transaction: %v\n", err)
 		return
 	}
 
@@ -213,9 +265,9 @@ func ExamplePrefixRange() {
 	pr, _ := fdb.PrefixRange([]byte("alphabet"))
 
 	// Read and process the range
-	kvs, e := tr.GetRange(pr, fdb.RangeOptions{}).GetSliceWithError()
-	if e != nil {
-		fmt.Printf("Unable to read range: %v\n", e)
+	kvs, err := tr.GetRange(pr, fdb.RangeOptions{}).GetSliceWithError()
+	if err != nil {
+		fmt.Printf("Unable to read range: %v\n", err)
 	}
 	for _, kv := range kvs {
 		fmt.Printf("%s: %s\n", string(kv.Key), string(kv.Value))
@@ -228,12 +280,12 @@ func ExamplePrefixRange() {
 }
 
 func ExampleRangeIterator() {
-	fdb.MustAPIVersion(400)
+	fdb.MustAPIVersion(API_VERSION)
 	db := fdb.MustOpenDefault()
 
-	tr, e := db.CreateTransaction()
-	if e != nil {
-		fmt.Printf("Unable to create transaction: %v\n", e)
+	tr, err := db.CreateTransaction()
+	if err != nil {
+		fmt.Printf("Unable to create transaction: %v\n", err)
 		return
 	}
 
@@ -249,9 +301,9 @@ func ExampleRangeIterator() {
 
 	// Advance will return true until the iterator is exhausted
 	for ri.Advance() {
-		kv, e := ri.Get()
-		if e != nil {
-			fmt.Printf("Unable to read next value: %v\n", e)
+		kv, err := ri.Get()
+		if err != nil {
+			fmt.Printf("Unable to read next value: %v\n", err)
 			return
 		}
 		fmt.Printf("%s is %s\n", kv.Key, kv.Value)
@@ -278,9 +330,104 @@ func TestKeyToString(t *testing.T) {
 			t.Errorf("got '%v', want '%v' at case %v", s, c.expect, i)
 		}
 	}
+
+	// Output:
 }
 
 func ExamplePrintable() {
 	fmt.Println(fdb.Printable([]byte{0, 1, 2, 'a', 'b', 'c', '1', '2', '3', '!', '?', 255}))
 	// Output: \x00\x01\x02abc123!?\xff
+}
+
+func TestDatabaseCloseRemovesResources(t *testing.T) {
+	err := fdb.APIVersion(API_VERSION)
+	if err != nil {
+		t.Fatalf("Unable to set API version: %v\n", err)
+	}
+
+	// OpenDefault opens the database described by the platform-specific default
+	// cluster file
+	db, err := fdb.OpenDefault()
+	if err != nil {
+		t.Fatalf("Unable to set API version: %v\n", err)
+	}
+
+	// Close the database after usage
+	db.Close()
+
+	// Open the same database again, if the database is still in the cache we would return the same object, if not we create a new object with a new pointer
+	newDB, err := fdb.OpenDefault()
+	if err != nil {
+		t.Fatalf("Unable to set API version: %v\n", err)
+	}
+
+	if db == newDB {
+		t.Fatalf("Expected a different database object, got: %v and %v\n", db, newDB)
+	}
+}
+
+func ExampleOpenWithConnectionString() {
+	fdb.MustAPIVersion(API_VERSION)
+
+	clusterFileContent, err := os.ReadFile(os.Getenv("FDB_CLUSTER_FILE"))
+	if err != nil {
+		fmt.Errorf("Unable to read cluster file: %v\n", err)
+		return
+	}
+
+	// OpenWithConnectionString opens the database described by the connection string
+	db, err := fdb.OpenWithConnectionString(string(clusterFileContent))
+	if err != nil {
+		fmt.Errorf("Unable to open database: %v\n", err)
+		return
+	}
+
+	// Close the database after usage
+	defer db.Close()
+
+	// Do work here
+
+	// Output:
+}
+
+func TestGetClientStatus(t *testing.T) {
+	// skip this test because multi-version client is currently not available in CI
+	t.Skip()
+
+	fdb.MustAPIVersion(API_VERSION)
+	db := fdb.MustOpenDefault()
+
+	st, err := db.GetClientStatus()
+	if err != nil {
+		t.Fatalf("GetClientStatus failed %v", err)
+	}
+	if len(st) == 0 {
+		t.Fatal("returned status is empty")
+	}
+}
+
+func ExampleDatabase_GetClientStatus() {
+	fdb.MustAPIVersion(API_VERSION)
+	err := fdb.Options().SetDisableClientBypass()
+	if err != nil {
+		fmt.Errorf("Unable to disable client bypass: %v\n", err)
+		return
+	}
+
+	db := fdb.MustOpenDefault()
+
+	st, err := db.GetClientStatus()
+	if err != nil {
+		fmt.Errorf("Unable to get client status: %v\n", err)
+		return
+	}
+
+	fmt.Printf("client status: %s\n", string(st))
+
+	// Close the database after usage
+	defer db.Close()
+
+	// Do work here
+
+	// Output:
 }

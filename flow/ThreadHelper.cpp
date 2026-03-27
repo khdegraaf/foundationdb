@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,58 @@
  * limitations under the License.
  */
 
-#include "flow/ThreadHelper.actor.h"
+#include <string>
+#include <thread>
 
-ThreadCallback* ThreadCallback::addCallback(ThreadCallback *cb) {
+#include "flow/flow.h"
+#include "flow/network.h"
+#include "flow/ThreadHelper.actor.h"
+#include "flow/Coroutines.h"
+#include "flow/Error.h"
+#include "flow/UnitTest.h"
+
+ThreadCallback* ThreadCallback::addCallback(ThreadCallback* cb) {
 	return (new ThreadMultiCallback())->addCallback(this)->addCallback(cb);
+}
+
+// A simple thread object that sends the result
+struct ThreadFutureSendObj {
+	void operator()() { tsav->send(Void()); }
+	ThreadSingleAssignmentVar<Void>* tsav;
+};
+
+// A simple thread object that cancels the threadFuture
+struct ThreadFutureCancelObj {
+	explicit ThreadFutureCancelObj(ThreadFuture<Void> f) : f(f) {}
+	void operator()() { f.cancel(); }
+	ThreadFuture<Void> f;
+};
+
+// This unit test should be running with TSAN enabled binary
+TEST_CASE("/flow/safeThreadFutureToFuture/Send") {
+	// std::thread is not working in simulation at present, disable this in simulation
+	if (g_network->isSimulated())
+		co_return;
+	auto* tsav = new ThreadSingleAssignmentVar<Void>;
+	std::thread thread = std::thread{ ThreadFutureSendObj{ tsav } };
+	ThreadFuture<Void> f(tsav);
+	// change this to unsafeThreadFutureToFuture will get a data-race failure
+	co_await safeThreadFutureToFuture(f);
+	thread.join();
+}
+
+// Test the case where the underlying threadFuture is cancelled
+TEST_CASE("/flow/safeThreadFutureToFuture/Cancel") {
+	// std::thread is not working in simulation at present, disable this in simulation
+	if (g_network->isSimulated())
+		co_return;
+	ThreadFuture<Void> f = onMainThread([]() -> Future<Void> { return Never(); });
+	std::thread thread = std::thread{ ThreadFutureCancelObj(f) };
+	try {
+		co_await safeThreadFutureToFuture(f); // this actor should get actor_cancelled
+		ASSERT(false);
+	} catch (Error& e) {
+		ASSERT(e.code() == error_code_actor_cancelled);
+	}
+	thread.join();
 }

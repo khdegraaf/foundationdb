@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,16 +30,13 @@
 package fdb
 
 import (
-	"bytes"
 	"encoding/binary"
 )
 
-func int64ToBytes(i int64) ([]byte, error) {
-	buf := new(bytes.Buffer)
-	if e := binary.Write(buf, binary.LittleEndian, i); e != nil {
-		return nil, e
-	}
-	return buf.Bytes(), nil
+func int64ToBytes(i int64) []byte {
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, uint64(i))
+	return buf
 }
 
 // Deprecated
@@ -67,22 +64,14 @@ func (o NetworkOptions) SetTraceEnable(param string) error {
 //
 // Parameter: max size of a single trace output file
 func (o NetworkOptions) SetTraceRollSize(param int64) error {
-	b, e := int64ToBytes(param)
-	if e != nil {
-		return e
-	}
-	return o.setOpt(31, b)
+	return o.setOpt(31, int64ToBytes(param))
 }
 
 // Sets the maximum size of all the trace output files put together. This value should be in the range ``[0, INT64_MAX]``. If the value is set to 0, there is no limit on the total size of the files. The default is a maximum size of 104,857,600 bytes. If the default roll size is used, this means that a maximum of 10 trace files will be written at a time.
 //
 // Parameter: max total size of trace files
 func (o NetworkOptions) SetTraceMaxLogsSize(param int64) error {
-	b, e := int64ToBytes(param)
-	if e != nil {
-		return e
-	}
-	return o.setOpt(32, b)
+	return o.setOpt(32, int64ToBytes(param))
 }
 
 // Sets the 'LogGroup' attribute with the specified value for all events in the trace output files. The default log group is 'default'.
@@ -92,11 +81,42 @@ func (o NetworkOptions) SetTraceLogGroup(param string) error {
 	return o.setOpt(33, []byte(param))
 }
 
-// Selects trace output format for this client. xml (the default) and json are supported.
+// Select the format of the log files. xml (the default) and json are supported.
 //
-// Parameter: trace format
+// Parameter: Format of trace files
 func (o NetworkOptions) SetTraceFormat(param string) error {
 	return o.setOpt(34, []byte(param))
+}
+
+// Select clock source for trace files. now (the default) or realtime are supported.
+//
+// Parameter: Trace clock source
+func (o NetworkOptions) SetTraceClockSource(param string) error {
+	return o.setOpt(35, []byte(param))
+}
+
+// Once provided, this string will be used to replace the port/PID in the log file names.
+//
+// Parameter: The identifier that will be part of all trace file names
+func (o NetworkOptions) SetTraceFileIdentifier(param string) error {
+	return o.setOpt(36, []byte(param))
+}
+
+// Use the same base trace file name for all client threads as it did before version 7.2. The current default behavior is to use distinct trace file names for client threads by including their version and thread index.
+func (o NetworkOptions) SetTraceShareAmongClientThreads() error {
+	return o.setOpt(37, nil)
+}
+
+// Initialize trace files on network setup, determine the local IP later. Otherwise tracing is initialized when opening the first database.
+func (o NetworkOptions) SetTraceInitializeOnSetup() error {
+	return o.setOpt(38, nil)
+}
+
+// Set file suffix for partially written log files.
+//
+// Parameter: Append this suffix to partially written log files. When a log file is complete, it is renamed to remove the suffix. No separator is added between the file and the suffix. If you want to add a file extension, you should include the separator - e.g. '.tmp' instead of 'tmp' to add the 'tmp' extension.
+func (o NetworkOptions) SetTracePartialFileSuffix(param string) error {
+	return o.setOpt(39, []byte(param))
 }
 
 // Set internal tuning or debugging knobs
@@ -162,22 +182,14 @@ func (o NetworkOptions) SetBuggifyDisable() error {
 //
 // Parameter: probability expressed as a percentage between 0 and 100
 func (o NetworkOptions) SetBuggifySectionActivatedProbability(param int64) error {
-	b, e := int64ToBytes(param)
-	if e != nil {
-		return e
-	}
-	return o.setOpt(50, b)
+	return o.setOpt(50, int64ToBytes(param))
 }
 
 // Set the probability of an active BUGGIFY section being fired
 //
 // Parameter: probability expressed as a percentage between 0 and 100
 func (o NetworkOptions) SetBuggifySectionFiredProbability(param int64) error {
-	b, e := int64ToBytes(param)
-	if e != nil {
-		return e
-	}
-	return o.setOpt(51, b)
+	return o.setOpt(51, int64ToBytes(param))
 }
 
 // Set the ca bundle
@@ -199,6 +211,11 @@ func (o NetworkOptions) SetTLSCaPath(param string) error {
 // Parameter: key passphrase
 func (o NetworkOptions) SetTLSPassword(param string) error {
 	return o.setOpt(54, []byte(param))
+}
+
+// Prevent client from connecting to a non-TLS endpoint by throwing network connection failed error.
+func (o NetworkOptions) SetTLSDisablePlaintextConnection() error {
+	return o.setOpt(55, nil)
 }
 
 // Disables the multi-version client API and instead uses the local client directly. Must be set before setting up the network.
@@ -225,9 +242,38 @@ func (o NetworkOptions) SetExternalClientDirectory(param string) error {
 	return o.setOpt(63, []byte(param))
 }
 
-// Prevents connections through the local client, allowing only connections through externally loaded client libraries. Intended primarily for testing.
+// Prevents connections through the local client, allowing only connections through externally loaded client libraries.
 func (o NetworkOptions) SetDisableLocalClient() error {
 	return o.setOpt(64, nil)
+}
+
+// Spawns multiple worker threads for each version of the client that is loaded.  Setting this to a number greater than one implies disable_local_client.
+//
+// Parameter: Number of client threads to be spawned.  Each cluster will be serviced by a single client thread.
+func (o NetworkOptions) SetClientThreadsPerVersion(param int64) error {
+	return o.setOpt(65, int64ToBytes(param))
+}
+
+// Adds an external client library to be used with a future version protocol. This option can be used testing purposes only!
+//
+// Parameter: path to client library
+func (o NetworkOptions) SetFutureVersionClientLibrary(param string) error {
+	return o.setOpt(66, []byte(param))
+}
+
+// Retain temporary external client library copies that are created for enabling multi-threading.
+func (o NetworkOptions) SetRetainClientLibraryCopies() error {
+	return o.setOpt(67, nil)
+}
+
+// Ignore the failure to initialize some of the external clients
+func (o NetworkOptions) SetIgnoreExternalClientFailures() error {
+	return o.setOpt(68, nil)
+}
+
+// Fail with an error if there is no client matching the server version the client is connecting to
+func (o NetworkOptions) SetFailIncompatibleClient() error {
+	return o.setOpt(69, nil)
 }
 
 // Disables logging of client statistics, such as sampled transaction activity.
@@ -235,31 +281,78 @@ func (o NetworkOptions) SetDisableClientStatisticsLogging() error {
 	return o.setOpt(70, nil)
 }
 
-// Enables debugging feature to perform slow task profiling. Requires trace logging to be enabled. WARNING: this feature is not recommended for use in production.
+// Deprecated
 func (o NetworkOptions) SetEnableSlowTaskProfiling() error {
 	return o.setOpt(71, nil)
+}
+
+// Enables debugging feature to perform run loop profiling. Requires trace logging to be enabled. WARNING: this feature is not recommended for use in production.
+func (o NetworkOptions) SetEnableRunLoopProfiling() error {
+	return o.setOpt(71, nil)
+}
+
+// Prevents the multi-version client API from being disabled, even if no external clients are configured. This option is required to use GRV caching.
+func (o NetworkOptions) SetDisableClientBypass() error {
+	return o.setOpt(72, nil)
+}
+
+// Enable client buggify - will make requests randomly fail (intended for client testing)
+func (o NetworkOptions) SetClientBuggifyEnable() error {
+	return o.setOpt(80, nil)
+}
+
+// Disable client buggify
+func (o NetworkOptions) SetClientBuggifyDisable() error {
+	return o.setOpt(81, nil)
+}
+
+// Set the probability of a CLIENT_BUGGIFY section being active for the current execution.
+//
+// Parameter: probability expressed as a percentage between 0 and 100
+func (o NetworkOptions) SetClientBuggifySectionActivatedProbability(param int64) error {
+	return o.setOpt(82, int64ToBytes(param))
+}
+
+// Set the probability of an active CLIENT_BUGGIFY section being fired. A section will only fire if it was activated
+//
+// Parameter: probability expressed as a percentage between 0 and 100
+func (o NetworkOptions) SetClientBuggifySectionFiredProbability(param int64) error {
+	return o.setOpt(83, int64ToBytes(param))
+}
+
+// Sets the IP address to use for tracing. If not provided, the IP address will be automatically determined when connecting to a cluster. This option allows you to specify the IP address explicitly and avoid the automatic determination process.
+//
+// Parameter: IP address in IPv4 or IPv6 format
+func (o NetworkOptions) SetTraceIp(param string) error {
+	return o.setOpt(84, []byte(param))
+}
+
+// Set a tracer to run on the client. Should be set to the same value as the tracer set on the server.
+//
+// Parameter: Distributed tracer type. Choose from none, log_file, or network_lossy
+func (o NetworkOptions) SetDistributedClientTracer(param string) error {
+	return o.setOpt(90, []byte(param))
+}
+
+// Sets the directory for storing temporary files created by FDB client, such as temporary copies of client libraries. Defaults to /tmp
+//
+// Parameter: Client directory for temporary files. 
+func (o NetworkOptions) SetClientTmpDir(param string) error {
+	return o.setOpt(91, []byte(param))
 }
 
 // Set the size of the client location cache. Raising this value can boost performance in very large databases where clients access data in a near-random pattern. Defaults to 100000.
 //
 // Parameter: Max location cache entries
 func (o DatabaseOptions) SetLocationCacheSize(param int64) error {
-	b, e := int64ToBytes(param)
-	if e != nil {
-		return e
-	}
-	return o.setOpt(10, b)
+	return o.setOpt(10, int64ToBytes(param))
 }
 
 // Set the maximum number of watches allowed to be outstanding on a database connection. Increasing this number could result in increased resource usage. Reducing this number will not cancel any outstanding watches. Defaults to 10000 and cannot be larger than 1000000.
 //
 // Parameter: Max outstanding watches
 func (o DatabaseOptions) SetMaxWatches(param int64) error {
-	b, e := int64ToBytes(param)
-	if e != nil {
-		return e
-	}
-	return o.setOpt(20, b)
+	return o.setOpt(20, int64ToBytes(param))
 }
 
 // Specify the machine ID that was passed to fdbserver processes running on the same machine as this client, for better location-aware load balancing.
@@ -271,9 +364,91 @@ func (o DatabaseOptions) SetMachineId(param string) error {
 
 // Specify the datacenter ID that was passed to fdbserver processes running in the same datacenter as this client, for better location-aware load balancing.
 //
-// Parameter: Hexadecimal ID
+// Parameter: A string identifier for the datacenter
 func (o DatabaseOptions) SetDatacenterId(param string) error {
 	return o.setOpt(22, []byte(param))
+}
+
+// Snapshot read operations will see the results of writes done in the same transaction. This is the default behavior.
+func (o DatabaseOptions) SetSnapshotRywEnable() error {
+	return o.setOpt(26, nil)
+}
+
+// Snapshot read operations will not see the results of writes done in the same transaction. This was the default behavior prior to API version 300.
+func (o DatabaseOptions) SetSnapshotRywDisable() error {
+	return o.setOpt(27, nil)
+}
+
+// Sets the maximum escaped length of key and value fields to be logged to the trace file via the LOG_TRANSACTION option. This sets the ``transaction_logging_max_field_length`` option of each transaction created by this database. See the transaction option description for more information.
+//
+// Parameter: Maximum length of escaped key and value fields.
+func (o DatabaseOptions) SetTransactionLoggingMaxFieldLength(param int64) error {
+	return o.setOpt(405, int64ToBytes(param))
+}
+
+// Set a timeout in milliseconds which, when elapsed, will cause each transaction automatically to be cancelled. This sets the ``timeout`` option of each transaction created by this database. See the transaction option description for more information. Using this option requires that the API version is 610 or higher.
+//
+// Parameter: value in milliseconds of timeout
+func (o DatabaseOptions) SetTransactionTimeout(param int64) error {
+	return o.setOpt(500, int64ToBytes(param))
+}
+
+// Set a maximum number of retries after which additional calls to ``onError`` will throw the most recently seen error code. This sets the ``retry_limit`` option of each transaction created by this database. See the transaction option description for more information.
+//
+// Parameter: number of times to retry
+func (o DatabaseOptions) SetTransactionRetryLimit(param int64) error {
+	return o.setOpt(501, int64ToBytes(param))
+}
+
+// Set the maximum amount of backoff delay incurred in the call to ``onError`` if the error is retryable. This sets the ``max_retry_delay`` option of each transaction created by this database. See the transaction option description for more information.
+//
+// Parameter: value in milliseconds of maximum delay
+func (o DatabaseOptions) SetTransactionMaxRetryDelay(param int64) error {
+	return o.setOpt(502, int64ToBytes(param))
+}
+
+// Set the maximum transaction size in bytes. This sets the ``size_limit`` option on each transaction created by this database. See the transaction option description for more information.
+//
+// Parameter: value in bytes
+func (o DatabaseOptions) SetTransactionSizeLimit(param int64) error {
+	return o.setOpt(503, int64ToBytes(param))
+}
+
+// The read version will be committed, and usually will be the latest committed, but might not be the latest committed in the event of a simultaneous fault and misbehaving clock.
+func (o DatabaseOptions) SetTransactionCausalReadRisky() error {
+	return o.setOpt(504, nil)
+}
+
+// Deprecated. Addresses returned by get_addresses_for_key include the port when enabled. As of api version 630, this option is enabled by default and setting this has no effect.
+func (o DatabaseOptions) SetTransactionIncludePortInAddress() error {
+	return o.setOpt(505, nil)
+}
+
+// Set a random idempotency id for all transactions. See the transaction option description for more information. This feature is in development and not ready for general use.
+func (o DatabaseOptions) SetTransactionAutomaticIdempotency() error {
+	return o.setOpt(506, nil)
+}
+
+// Allows ``get`` operations to read from sections of keyspace that have become unreadable because of versionstamp operations. This sets the ``bypass_unreadable`` option of each transaction created by this database. See the transaction option description for more information.
+func (o DatabaseOptions) SetTransactionBypassUnreadable() error {
+	return o.setOpt(700, nil)
+}
+
+// By default, operations that are performed on a transaction while it is being committed will not only fail themselves, but they will attempt to fail other in-flight operations (such as the commit) as well. This behavior is intended to help developers discover situations where operations could be unintentionally executed after the transaction has been reset. Setting this option removes that protection, causing only the offending operation to fail.
+func (o DatabaseOptions) SetTransactionUsedDuringCommitProtectionDisable() error {
+	return o.setOpt(701, nil)
+}
+
+// Enables conflicting key reporting on all transactions, allowing them to retrieve the keys that are conflicting with other transactions.
+func (o DatabaseOptions) SetTransactionReportConflictingKeys() error {
+	return o.setOpt(702, nil)
+}
+
+// Enables verification of causal read risky by checking whether clients are able to read stale data when they detect a recovery, and logging an error if so.
+//
+// Parameter: integer between 0 and 100 expressing the probability a client will verify it can't read stale data
+func (o DatabaseOptions) SetTestCausalReadRisky(param int64) error {
+	return o.setOpt(900, int64ToBytes(param))
 }
 
 // The transaction, if not self-conflicting, may be committed a second time after commit succeeds, in the event of a fault
@@ -281,7 +456,7 @@ func (o TransactionOptions) SetCausalWriteRisky() error {
 	return o.setOpt(10, nil)
 }
 
-// The read version will be committed, and usually will be the latest committed, but might not be the latest committed in the event of a fault or partition
+// The read version will be committed, and usually will be the latest committed, but might not be the latest committed in the event of a simultaneous fault and misbehaving clock.
 func (o TransactionOptions) SetCausalReadRisky() error {
 	return o.setOpt(20, nil)
 }
@@ -291,12 +466,17 @@ func (o TransactionOptions) SetCausalReadDisable() error {
 	return o.setOpt(21, nil)
 }
 
+// Addresses returned by get_addresses_for_key include the port when enabled. As of api version 630, this option is enabled by default and setting this has no effect.
+func (o TransactionOptions) SetIncludePortInAddress() error {
+	return o.setOpt(23, nil)
+}
+
 // The next write performed on this transaction will not generate a write conflict range. As a result, other transactions which read the key(s) being modified by the next write will not conflict with this transaction. Care needs to be taken when using this option on a transaction that is shared between multiple threads. When setting this option, write conflict ranges will be disabled on the next write operation, regardless of what thread it is on.
 func (o TransactionOptions) SetNextWriteNoWriteConflictRange() error {
 	return o.setOpt(30, nil)
 }
 
-// Reads performed by a transaction will not see any prior mutations that occured in that transaction, instead seeing the value which was in the database at the transaction's read version. This option may provide a small performance benefit for the client, but also disables a number of client-side optimizations which are beneficial for transactions which tend to read and write the same keys within a single transaction.
+// Reads performed by a transaction will not see any prior mutations that occurred in that transaction, instead seeing the value which was in the database at the transaction's read version. This option may provide a small performance benefit for the client, but also disables a number of client-side optimizations which are beneficial for transactions which tend to read and write the same keys within a single transaction. It is an error to set this option after performing any reads or writes on the transaction.
 func (o TransactionOptions) SetReadYourWritesDisable() error {
 	return o.setOpt(51, nil)
 }
@@ -304,6 +484,31 @@ func (o TransactionOptions) SetReadYourWritesDisable() error {
 // Deprecated
 func (o TransactionOptions) SetReadAheadDisable() error {
 	return o.setOpt(52, nil)
+}
+
+// Storage server should cache disk blocks needed for subsequent read requests in this transaction.  This is the default behavior.
+func (o TransactionOptions) SetReadServerSideCacheEnable() error {
+	return o.setOpt(507, nil)
+}
+
+// Storage server should not cache disk blocks needed for subsequent read requests in this transaction.  This can be used to avoid cache pollution for reads not expected to be repeated.
+func (o TransactionOptions) SetReadServerSideCacheDisable() error {
+	return o.setOpt(508, nil)
+}
+
+// Use normal read priority for subsequent read requests in this transaction.  This is the default read priority.
+func (o TransactionOptions) SetReadPriorityNormal() error {
+	return o.setOpt(509, nil)
+}
+
+// Use low read priority for subsequent read requests in this transaction.
+func (o TransactionOptions) SetReadPriorityLow() error {
+	return o.setOpt(510, nil)
+}
+
+// Use high read priority for subsequent read requests in this transaction.
+func (o TransactionOptions) SetReadPriorityHigh() error {
+	return o.setOpt(511, nil)
 }
 
 // Not yet implemented.
@@ -326,7 +531,7 @@ func (o TransactionOptions) SetPrioritySystemImmediate() error {
 	return o.setOpt(200, nil)
 }
 
-// Specifies that this transaction should be treated as low priority and that default priority transactions should be processed first. Useful for doing batch work simultaneously with latency-sensitive work
+// Specifies that this transaction should be treated as low priority and that default priority transactions will be processed first. Batch priority transactions will also be throttled at load levels smaller than for other types of transactions and may be fully cut off in the event of machine failures. Useful for doing batch work simultaneously with latency-sensitive work
 func (o TransactionOptions) SetPriorityBatch() error {
 	return o.setOpt(201, nil)
 }
@@ -336,14 +541,24 @@ func (o TransactionOptions) SetInitializeNewDatabase() error {
 	return o.setOpt(300, nil)
 }
 
-// Allows this transaction to read and modify system keys (those that start with the byte 0xFF)
+// Allows this transaction to read and modify system keys (those that start with the byte 0xFF). Implies raw_access.
 func (o TransactionOptions) SetAccessSystemKeys() error {
 	return o.setOpt(301, nil)
 }
 
-// Allows this transaction to read system keys (those that start with the byte 0xFF)
+// Allows this transaction to read system keys (those that start with the byte 0xFF). Implies raw_access.
 func (o TransactionOptions) SetReadSystemKeys() error {
 	return o.setOpt(302, nil)
+}
+
+// Allows this transaction to access the raw key-space when tenant mode is on.
+func (o TransactionOptions) SetRawAccess() error {
+	return o.setOpt(303, nil)
+}
+
+// Allows this transaction to bypass storage quota enforcement. Should only be used for transactions that directly or indirectly decrease the size of the tenant group's data.
+func (o TransactionOptions) SetBypassStorageQuota() error {
+	return o.setOpt(304, nil)
 }
 
 // Not yet implemented.
@@ -351,57 +566,81 @@ func (o TransactionOptions) SetDebugRetryLogging(param string) error {
 	return o.setOpt(401, []byte(param))
 }
 
-// Enables tracing for this transaction and logs results to the client trace logs. Client trace logging must be enabled to get log output.
+// Deprecated
 //
 // Parameter: String identifier to be used in the logs when tracing this transaction. The identifier must not exceed 100 characters.
 func (o TransactionOptions) SetTransactionLoggingEnable(param string) error {
 	return o.setOpt(402, []byte(param))
 }
 
-// Set a timeout in milliseconds which, when elapsed, will cause the transaction automatically to be cancelled. Valid parameter values are ``[0, INT_MAX]``. If set to 0, will disable all timeouts. All pending and any future uses of the transaction will throw an exception. The transaction can be used again after it is reset. Like all transaction options, a timeout must be reset after a call to onError. This behavior allows the user to make the timeout dynamic.
+// Sets a client provided identifier for the transaction that will be used in scenarios like tracing or profiling. Client trace logging or transaction profiling must be separately enabled.
+//
+// Parameter: String identifier to be used when tracing or profiling this transaction. The identifier must not exceed 100 characters.
+func (o TransactionOptions) SetDebugTransactionIdentifier(param string) error {
+	return o.setOpt(403, []byte(param))
+}
+
+// Enables tracing for this transaction and logs results to the client trace logs. The DEBUG_TRANSACTION_IDENTIFIER option must be set before using this option, and client trace logging must be enabled to get log output.
+func (o TransactionOptions) SetLogTransaction() error {
+	return o.setOpt(404, nil)
+}
+
+// Sets the maximum escaped length of key and value fields to be logged to the trace file via the LOG_TRANSACTION option, after which the field will be truncated. A negative value disables truncation.
+//
+// Parameter: Maximum length of escaped key and value fields.
+func (o TransactionOptions) SetTransactionLoggingMaxFieldLength(param int64) error {
+	return o.setOpt(405, int64ToBytes(param))
+}
+
+// Sets an identifier for server tracing of this transaction. When committed, this identifier triggers logging when each part of the transaction authority encounters it, which is helpful in diagnosing slowness in misbehaving clusters. The identifier is randomly generated. When there is also a debug_transaction_identifier, both IDs are logged together.
+func (o TransactionOptions) SetServerRequestTracing() error {
+	return o.setOpt(406, nil)
+}
+
+// Set a timeout in milliseconds which, when elapsed, will cause the transaction automatically to be cancelled. Valid parameter values are ``[0, INT_MAX]``. If set to 0, will disable all timeouts. All pending and any future uses of the transaction will throw an exception. The transaction can be used again after it is reset. Prior to API version 610, like all other transaction options, the timeout must be reset after a call to ``onError``. If the API version is 610 or greater, the timeout is not reset after an ``onError`` call. This allows the user to specify a longer timeout on specific transactions than the default timeout specified through the ``transaction_timeout`` database option without the shorter database timeout cancelling transactions that encounter a retryable error. Note that at all API versions, it is safe and legal to set the timeout each time the transaction begins, so most code written assuming the older behavior can be upgraded to the newer behavior without requiring any modification, and the caller is not required to implement special logic in retry loops to only conditionally set this option.
 //
 // Parameter: value in milliseconds of timeout
 func (o TransactionOptions) SetTimeout(param int64) error {
-	b, e := int64ToBytes(param)
-	if e != nil {
-		return e
-	}
-	return o.setOpt(500, b)
+	return o.setOpt(500, int64ToBytes(param))
 }
 
-// Set a maximum number of retries after which additional calls to onError will throw the most recently seen error code. Valid parameter values are ``[-1, INT_MAX]``. If set to -1, will disable the retry limit. Like all transaction options, the retry limit must be reset after a call to onError. This behavior allows the user to make the retry limit dynamic.
+// Set a maximum number of retries after which additional calls to ``onError`` will throw the most recently seen error code. Valid parameter values are ``[-1, INT_MAX]``. If set to -1, will disable the retry limit. Prior to API version 610, like all other transaction options, the retry limit must be reset after a call to ``onError``. If the API version is 610 or greater, the retry limit is not reset after an ``onError`` call. Note that at all API versions, it is safe and legal to set the retry limit each time the transaction begins, so most code written assuming the older behavior can be upgraded to the newer behavior without requiring any modification, and the caller is not required to implement special logic in retry loops to only conditionally set this option.
 //
 // Parameter: number of times to retry
 func (o TransactionOptions) SetRetryLimit(param int64) error {
-	b, e := int64ToBytes(param)
-	if e != nil {
-		return e
-	}
-	return o.setOpt(501, b)
+	return o.setOpt(501, int64ToBytes(param))
 }
 
-// Set the maximum amount of backoff delay incurred in the call to onError if the error is retryable. Defaults to 1000 ms. Valid parameter values are ``[0, INT_MAX]``. Like all transaction options, the maximum retry delay must be reset after a call to onError. If the maximum retry delay is less than the current retry delay of the transaction, then the current retry delay will be clamped to the maximum retry delay.
+// Set the maximum amount of backoff delay incurred in the call to ``onError`` if the error is retryable. Defaults to 1000 ms. Valid parameter values are ``[0, INT_MAX]``. If the maximum retry delay is less than the current retry delay of the transaction, then the current retry delay will be clamped to the maximum retry delay. Prior to API version 610, like all other transaction options, the maximum retry delay must be reset after a call to ``onError``. If the API version is 610 or greater, the retry limit is not reset after an ``onError`` call. Note that at all API versions, it is safe and legal to set the maximum retry delay each time the transaction begins, so most code written assuming the older behavior can be upgraded to the newer behavior without requiring any modification, and the caller is not required to implement special logic in retry loops to only conditionally set this option.
 //
 // Parameter: value in milliseconds of maximum delay
 func (o TransactionOptions) SetMaxRetryDelay(param int64) error {
-	b, e := int64ToBytes(param)
-	if e != nil {
-		return e
-	}
-	return o.setOpt(502, b)
+	return o.setOpt(502, int64ToBytes(param))
 }
 
-// Snapshot read operations will see the results of writes done in the same transaction.
+// Set the transaction size limit in bytes. The size is calculated by combining the sizes of all keys and values written or mutated, all key ranges cleared, and all read and write conflict ranges. (In other words, it includes the total size of all data included in the request to the cluster to commit the transaction.) Large transactions can cause performance problems on FoundationDB clusters, so setting this limit to a smaller value than the default can help prevent the client from accidentally degrading the cluster's performance. This value must be at least 32 and cannot be set to higher than 10,000,000, the default transaction size limit.
+//
+// Parameter: value in bytes
+func (o TransactionOptions) SetSizeLimit(param int64) error {
+	return o.setOpt(503, int64ToBytes(param))
+}
+
+// Automatically assign a random 16 byte idempotency id for this transaction. Prevents commits from failing with ``commit_unknown_result``. WARNING: If you are also using the multiversion client or transaction timeouts, if either cluster_version_changed or transaction_timed_out was thrown during a commit, then that commit may have already succeeded or may succeed in the future. This feature is in development and not ready for general use.
+func (o TransactionOptions) SetAutomaticIdempotency() error {
+	return o.setOpt(505, nil)
+}
+
+// Snapshot read operations will see the results of writes done in the same transaction. This is the default behavior.
 func (o TransactionOptions) SetSnapshotRywEnable() error {
 	return o.setOpt(600, nil)
 }
 
-// Snapshot read operations will not see the results of writes done in the same transaction.
+// Snapshot read operations will not see the results of writes done in the same transaction. This was the default behavior prior to API version 300.
 func (o TransactionOptions) SetSnapshotRywDisable() error {
 	return o.setOpt(601, nil)
 }
 
-// The transaction can read and write to locked databases, and is resposible for checking that it took the lock.
+// The transaction can read and write to locked databases, and is responsible for checking that it took the lock.
 func (o TransactionOptions) SetLockAware() error {
 	return o.setOpt(700, nil)
 }
@@ -411,9 +650,84 @@ func (o TransactionOptions) SetUsedDuringCommitProtectionDisable() error {
 	return o.setOpt(701, nil)
 }
 
-// The transaction can read from locked databases.
+// The transaction can read from locked databases. This option will make the transaction read-only if the lock_aware option is not set.
 func (o TransactionOptions) SetReadLockAware() error {
 	return o.setOpt(702, nil)
+}
+
+// This option should only be used by tools which change the database configuration.
+func (o TransactionOptions) SetUseProvisionalProxies() error {
+	return o.setOpt(711, nil)
+}
+
+// The transaction can retrieve keys that are conflicting with other transactions.
+func (o TransactionOptions) SetReportConflictingKeys() error {
+	return o.setOpt(712, nil)
+}
+
+// By default, the special key space will only allow users to read from exactly one module (a subspace in the special key space). Use this option to allow reading from zero or more modules. Users who set this option should be prepared for new modules, which may have different behaviors than the modules they're currently reading. For example, a new module might block or return an error.
+func (o TransactionOptions) SetSpecialKeySpaceRelaxed() error {
+	return o.setOpt(713, nil)
+}
+
+// By default, users are not allowed to write to special keys. Enable this option will implicitly enable all options required to achieve the configuration change.
+func (o TransactionOptions) SetSpecialKeySpaceEnableWrites() error {
+	return o.setOpt(714, nil)
+}
+
+// Adds a tag to the transaction that can be used to apply manual targeted throttling. At most 5 tags can be set on a transaction.
+//
+// Parameter: String identifier used to associated this transaction with a throttling group. Must not exceed 16 characters.
+func (o TransactionOptions) SetTag(param string) error {
+	return o.setOpt(800, []byte(param))
+}
+
+// Adds a tag to the transaction that can be used to apply manual or automatic targeted throttling. At most 5 tags can be set on a transaction.
+//
+// Parameter: String identifier used to associated this transaction with a throttling group. Must not exceed 16 characters.
+func (o TransactionOptions) SetAutoThrottleTag(param string) error {
+	return o.setOpt(801, []byte(param))
+}
+
+// Adds a parent to the Span of this transaction. Used for transaction tracing. A span can be identified with a 33 bytes serialized binary format which consists of: 8 bytes protocol version, e.g. ``0x0FDB00B073000000LL`` in little-endian format, 16 bytes trace id, 8 bytes span id, 1 byte set to 1 if sampling is enabled
+//
+// Parameter: A serialized binary byte string of length 33 used to associate the span of this transaction with a parent
+func (o TransactionOptions) SetSpanParent(param []byte) error {
+	return o.setOpt(900, param)
+}
+
+// Asks storage servers for how many bytes a clear key range contains. Otherwise uses the location cache to roughly estimate this.
+func (o TransactionOptions) SetExpensiveClearCostEstimationEnable() error {
+	return o.setOpt(1000, nil)
+}
+
+// Allows ``get`` operations to read from sections of keyspace that have become unreadable because of versionstamp operations. These reads will view versionstamp operations as if they were set operations that did not fill in the versionstamp.
+func (o TransactionOptions) SetBypassUnreadable() error {
+	return o.setOpt(1100, nil)
+}
+
+// Allows this transaction to use cached GRV from the database context. Defaults to off. Upon first usage, starts a background updater to periodically update the cache to avoid stale read versions. The disable_client_bypass option must also be set.
+func (o TransactionOptions) SetUseGrvCache() error {
+	return o.setOpt(1101, nil)
+}
+
+// Attach given authorization token to the transaction such that subsequent tenant-aware requests are authorized
+//
+// Parameter: A JSON Web Token authorized to access data belonging to one or more tenants, indicated by 'tenants' claim of the token's payload.
+func (o TransactionOptions) SetAuthorizationToken(param string) error {
+	return o.setOpt(2000, []byte(param))
+}
+
+// Enables replica consistency check, which compares the results returned by storage server replicas (as many as specified by consistency_check_required_replicas option) for a given read request, in client-side load balancer.
+func (o TransactionOptions) SetEnableReplicaConsistencyCheck() error {
+	return o.setOpt(4000, nil)
+}
+
+// Specifies the number of storage server replica results that the load balancer needs to compare when enable_replica_consistency_check option is set.
+//
+// Parameter: Number of storage replicas over which the load balancer consistency check is done.
+func (o TransactionOptions) SetConsistencyCheckRequiredReplicas(param int64) error {
+	return o.setOpt(4001, int64ToBytes(param))
 }
 
 type StreamingMode int
@@ -425,22 +739,23 @@ const (
 	StreamingModeWantAll StreamingMode = -1
 
 	// The default. The client doesn't know how much of the range it is likely
-	// to used and wants different performance concerns to be balanced. Only a
-	// small portion of data is transferred to the client initially (in order to
-	// minimize costs if the client doesn't read the entire range), and as the
-	// caller iterates over more items in the range larger batches will be
-	// transferred in order to minimize latency.
+	// to used and wants different performance concerns to be balanced.
+	// Only a small portion of data is transferred to the client initially (in
+	// order to minimize costs if the client doesn't read the entire range), and
+	// as the caller iterates over more items in the range larger batches will
+	// be transferred in order to minimize latency. After enough iterations,
+	// the iterator mode will eventually reach the same byte limit as “WANT_ALL“
 	StreamingModeIterator StreamingMode = 0
 
 	// Infrequently used. The client has passed a specific row limit and wants
 	// that many rows delivered in a single batch. Because of iterator operation
 	// in client drivers make request batches transparent to the user, consider
-	// ``WANT_ALL`` StreamingMode instead. A row limit must be specified if this
+	// “WANT_ALL“ StreamingMode instead. A row limit must be specified if this
 	// mode is used.
 	StreamingModeExact StreamingMode = 1
 
-	// Infrequently used. Transfer data in batches small enough to not be much
-	// more expensive than reading individual rows, to minimize cost if
+	// Infrequently used. Transfer data in batches small enough to not be
+	// much more expensive than reading individual rows, to minimize cost if
 	// iteration stops early.
 	StreamingModeSmall StreamingMode = 2
 
@@ -448,16 +763,16 @@ const (
 	// large.
 	StreamingModeMedium StreamingMode = 3
 
-	// Infrequently used. Transfer data in batches large enough to be, in a
-	// high-concurrency environment, nearly as efficient as possible. If the
-	// client stops iteration early, some disk and network bandwidth may be
-	// wasted. The batch size may still be too small to allow a single client to
-	// get high throughput from the database, so if that is what you need
+	// Infrequently used. Transfer data in batches large enough to be,
+	// in a high-concurrency environment, nearly as efficient as possible.
+	// If the client stops iteration early, some disk and network bandwidth may
+	// be wasted. The batch size may still be too small to allow a single client
+	// to get high throughput from the database, so if that is what you need
 	// consider the SERIAL StreamingMode.
 	StreamingModeLarge StreamingMode = 4
 
-	// Transfer data in batches large enough that an individual client can get
-	// reasonable read bandwidth from the database. If the client stops
+	// Transfer data in batches large enough that an individual client can
+	// get reasonable read bandwidth from the database. If the client stops
 	// iteration early, considerable disk and network bandwidth may be wasted.
 	StreamingModeSerial StreamingMode = 5
 )
@@ -512,12 +827,12 @@ func (t Transaction) Min(key KeyConvertible, param []byte) {
 	t.atomicOp(key.FDBKey(), param, 13)
 }
 
-// Transforms ``key`` using a versionstamp for the transaction. Sets the transformed key in the database to ``param``. The key is transformed by removing the final four bytes from the key and reading those as a little-Endian 32-bit integer to get a position ``pos``. The 10 bytes of the key from ``pos`` to ``pos + 10`` are replaced with the versionstamp of the transaction used. The first byte of the key is position 0. A versionstamp is a 10 byte, unique, monotonically (but not sequentially) increasing value for each committed transaction. The first 8 bytes are the committed version of the database (serialized in big-Endian order). The last 2 bytes are monotonic in the serialization order for transactions. WARNING: At this time, versionstamps are compatible with the Tuple layer only in the Java and Python bindings. Also, note that prior to API version 520, the offset was computed from only the final two bytes rather than the final four bytes.
+// Transforms ``key`` using a versionstamp for the transaction. Sets the transformed key in the database to ``param``. The key is transformed by removing the final four bytes from the key and reading those as a little-Endian 32-bit integer to get a position ``pos``. The 10 bytes of the key from ``pos`` to ``pos + 10`` are replaced with the versionstamp of the transaction used. The first byte of the key is position 0. A versionstamp is a 10 byte, unique, monotonically (but not sequentially) increasing value for each committed transaction. The first 8 bytes are the committed version of the database (serialized in big-Endian order). The last 2 bytes are monotonic in the serialization order for transactions. WARNING: At this time, versionstamps are compatible with the Tuple layer only in the Java, Python, and Go bindings. Also, note that prior to API version 520, the offset was computed from only the final two bytes rather than the final four bytes.
 func (t Transaction) SetVersionstampedKey(key KeyConvertible, param []byte) {
 	t.atomicOp(key.FDBKey(), param, 14)
 }
 
-// Transforms ``param`` using a versionstamp for the transaction. Sets the ``key`` given to the transformed ``param``. The parameter is transformed by removing the final four bytes from ``param`` and reading those as a little-Endian 32-bit integer to get a position ``pos``. The 10 bytes of the parameter from ``pos`` to ``pos + 10`` are replaced with the versionstamp of the transaction used. The first byte of the parameter is position 0. A versionstamp is a 10 byte, unique, monotonically (but not sequentially) increasing value for each committed transaction. The first 8 bytes are the committed version of the database (serialized in big-Endian order). The last 2 bytes are monotonic in the serialization order for transactions. WARNING: At this time, versionstamps are compatible with the Tuple layer only in the Java and Python bindings. Also, note that prior to API version 520, the versionstamp was always placed at the beginning of the parameter rather than computing an offset.
+// Transforms ``param`` using a versionstamp for the transaction. Sets the ``key`` given to the transformed ``param``. The parameter is transformed by removing the final four bytes from ``param`` and reading those as a little-Endian 32-bit integer to get a position ``pos``. The 10 bytes of the parameter from ``pos`` to ``pos + 10`` are replaced with the versionstamp of the transaction used. The first byte of the parameter is position 0. A versionstamp is a 10 byte, unique, monotonically (but not sequentially) increasing value for each committed transaction. The first 8 bytes are the committed version of the database (serialized in big-Endian order). The last 2 bytes are monotonic in the serialization order for transactions. WARNING: At this time, versionstamps are compatible with the Tuple layer only in the Java, Python, and Go bindings. Also, note that prior to API version 520, the versionstamp was always placed at the beginning of the parameter rather than computing an offset.
 func (t Transaction) SetVersionstampedValue(key KeyConvertible, param []byte) {
 	t.atomicOp(key.FDBKey(), param, 15)
 }
@@ -530,6 +845,11 @@ func (t Transaction) ByteMin(key KeyConvertible, param []byte) {
 // Performs lexicographic comparison of byte strings. If the existing value in the database is not present, then ``param`` is stored. Otherwise the larger of the two values is then stored in the database.
 func (t Transaction) ByteMax(key KeyConvertible, param []byte) {
 	t.atomicOp(key.FDBKey(), param, 17)
+}
+
+// Performs an atomic ``compare and clear`` operation. If the existing value in the database is equal to the given value, then given key is cleared.
+func (t Transaction) CompareAndClear(key KeyConvertible, param []byte) {
+	t.atomicOp(key.FDBKey(), param, 20)
 }
 
 type conflictRangeType int
@@ -547,15 +867,15 @@ type ErrorPredicate int
 
 const (
 
-	// Returns ``true`` if the error indicates the operations in the
-	// transactions should be retried because of transient error.
+	// Returns “true“ if the error indicates the operations in the transactions
+	// should be retried because of transient error.
 	ErrorPredicateRetryable ErrorPredicate = 50000
 
-	// Returns ``true`` if the error indicates the transaction may have
-	// succeeded, though not in a way the system can verify.
+	// Returns “true“ if the error indicates the transaction may have succeeded,
+	// though not in a way the system can verify.
 	ErrorPredicateMaybeCommitted ErrorPredicate = 50001
 
-	// Returns ``true`` if the error indicates the transaction has not
-	// committed, though in a way that can be retried.
+	// Returns “true“ if the error indicates the transaction has not committed,
+	// though in a way that can be retried.
 	ErrorPredicateRetryableNotCommitted ErrorPredicate = 50002
 )

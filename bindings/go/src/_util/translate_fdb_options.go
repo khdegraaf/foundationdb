@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -66,11 +66,7 @@ func writeOptBytes(w io.Writer, receiver string, function string, opt Option) {
 
 func writeOptInt(w io.Writer, receiver string, function string, opt Option) {
 	fmt.Fprintf(w, `func (o %s) %s(param int64) error {
-	b, e := int64ToBytes(param)
-	if e != nil {
-		return e
-	}
-	return o.setOpt(%d, b)
+	return o.setOpt(%d, int64ToBytes(param))
 }
 `, receiver, function, opt.Code)
 }
@@ -178,7 +174,7 @@ func main() {
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -205,16 +201,13 @@ func main() {
 package fdb
 
 import (
-	"bytes"
 	"encoding/binary"
 )
 
-func int64ToBytes(i int64) ([]byte, error) {
-	buf := new(bytes.Buffer)
-	if e := binary.Write(buf, binary.LittleEndian, i); e != nil {
-		return nil, e
-	}
-	return buf.Bytes(), nil
+func int64ToBytes(i int64) []byte {
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, uint64(i))
+	return buf
 }
 `)
 

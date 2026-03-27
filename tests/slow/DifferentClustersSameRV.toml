@@ -1,0 +1,13 @@
+[configuration]
+extraDatabaseMode = 'Single'
+
+[[test]]
+testTitle = 'DifferentClustersSameRV'
+clearAfterTest = false
+
+    [[test.workload]]
+    testName = 'DifferentClustersSameRV'
+    testDuration = 500
+    switchAfter = 50
+    keyToRead = 'someKey'
+    keyToWatch = 'anotherKey'

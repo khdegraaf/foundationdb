@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2018 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@
 
 #include "fdbclient/Subspace.h"
 
-Subspace::Subspace(Tuple const& tuple, StringRef const& rawPrefix){
+Subspace::Subspace(Tuple const& tuple, StringRef const& rawPrefix) {
 	StringRef packed = tuple.pack();
 
 	this->rawPrefix.reserve(this->rawPrefix.arena(), rawPrefix.size() + packed.size());
@@ -34,14 +34,14 @@ Subspace::Subspace(Tuple const& tuple, Standalone<VectorRef<uint8_t>> const& raw
 	this->rawPrefix.append(this->rawPrefix.arena(), tuple.pack().begin(), tuple.pack().size());
 }
 
-Subspace::Subspace(StringRef const& rawPrefix){
+Subspace::Subspace(StringRef const& rawPrefix) {
 	this->rawPrefix.append(this->rawPrefix.arena(), rawPrefix.begin(), rawPrefix.size());
 }
 
-Subspace::~Subspace() { }
+Subspace::~Subspace() = default;
 
 Key Subspace::key() const {
-	return StringRef(rawPrefix.begin(), rawPrefix.size());
+	return Key(StringRef(rawPrefix.begin(), rawPrefix.size()), rawPrefix.arena());
 }
 
 Key Subspace::pack(const Tuple& tuple) const {
@@ -72,7 +72,8 @@ KeyRange Subspace::range(Tuple const& tuple) const {
 	end.push_back(keyRange.arena(), uint8_t('\xff'));
 
 	// FIXME: test that this uses the keyRange arena and doesn't create another one
-	keyRange.KeyRangeRef::operator=(KeyRangeRef(StringRef(begin.begin(), begin.size()), StringRef(end.begin(), end.size())));
+	keyRange.KeyRangeRef::operator=(
+	    KeyRangeRef(StringRef(begin.begin(), begin.size()), StringRef(end.begin(), end.size())));
 	return keyRange;
 }
 
